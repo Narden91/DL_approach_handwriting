@@ -1,1 +1,5 @@
-name: model2
+model:
+  input_size: 14
+  hidden_size: 256
+  num_layers: 3
+  num_classes: 2

@@ -1,9 +1,14 @@
 defaults:
-  - process: process1
   - model: model1
-  - _self_
+  - process: process1
 
 data:
-  raw: data/raw/sample.csv
-  processed: data/processed/processed.csv
-  final: data/final/final.csv
+  raw_dir: ${hydra:runtime.cwd}/data/raw
+  processed_dir: ${hydra:runtime.cwd}/data/processed
+  final_dir: ${hydra:runtime.cwd}/data/final
+
+training:
+  num_epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  num_folds: 5

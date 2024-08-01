@@ -2,3 +2,8 @@ use_columns:
   - col1
   - col2
   - col3
+
+process:
+  train_ratio: 0.6
+  val_ratio: 0.2
+  test_ratio: 0.2
