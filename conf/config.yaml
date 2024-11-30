@@ -1,0 +1,36 @@
+defaults:
+  - _self_
+
+hydra:
+  job:
+    chdir: false
+
+seed: 42
+experiment_name: "handwriting_analysis"
+device: "cuda"
+
+data:
+  data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
+  window_size: 50
+  stride: 25
+  batch_size: 32
+  num_workers: 4
+  val_split: 0.2
+  test_split: 0.1
+  num_tasks: 34  
+  file_pattern: "T{:02d}.csv"  
+  columns:
+    id: "Id"  # Column name for subject ID
+    label: "Label"  # Column name for label
+    segment: "Segment"  # Column name for temporal order
+    task: "Task_ID"  # Column name for task identifier
+
+training:
+  max_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  early_stopping_patience: 10
+  gradient_clip_val: 1.0
+  checkpoint_dir: "checkpoints"
+
+version_base: "1.1"

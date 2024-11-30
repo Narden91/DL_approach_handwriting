@@ -1,134 +1,114 @@
-# Handwriting Classification with Deep Learning
+# Handwriting Analysis using Deep Learning and stroke approach for Alzheimer's Detection
 
-This project implements a deep learning approach for handwriting classification using LSTM networks. It processes raw handwriting data, trains an LSTM model, and evaluates its performance using cross-validation.
+## Project Overview
+This project implements a deep learning pipeline for detecting Alzheimer's disease through handwriting analysis. The system processes handwriting data from multiple tasks and uses various deep learning architectures (LSTM, Attention) for binary classification.
+
+## Features
+- Multi-task handwriting analysis
+- Support for various deep learning architectures (LSTM, Attention)
+- Sliding window approach for handling variable sequence lengths
+- Comprehensive experiment tracking with Weights & Biases
+- Hydra-based configuration management
+- PyTorch Lightning implementation
 
 ## Project Structure
-
 ```
-handwriting_classifier/
-├── config/
-│   ├── main.yaml
-│   ├── model/
-│   │   ├── model1.yaml
-│   │   └── model2.yaml
-│   └── process/
-│       ├── process1.yaml
-│       └── process2.yaml
-├── data/
-│   ├── raw/
-│   ├── processed/
-│   └── final/
-├── src/
-│   ├── __init__.py
-│   ├── process.py
-│   ├── train_model.py
-│   └── utils.py
-├── tests/
-│   ├── __init__.py
-│   ├── test_process.py
-│   └── test_train_model.py
-├── notebooks/
-├── .gitignore
-├── Makefile
-├── pyproject.toml
-└── README.md
+handwriting_analysis/
+├── conf/                     # Configuration files
+│   ├── config.yaml          # Main configuration
+│   ├── data/                # Data-related configs
+│   ├── model/               # Model architectures configs
+│   └── training/            # Training hyperparameters
+├── src/                     # Source code
+│   ├── main.py             # Main training script
+│   ├── data/               # Data loading and processing
+│   ├── models/             # Model implementations
+│   └── utils/              # Utility functions
+├── requirements.txt         # Project dependencies
+└── README.md               # This file
 ```
 
-## Setup
+## Installation
 
 1. Clone the repository:
-   ```
-   git clone https://github.com/Narden91/DL_approach_handwriting.git
-   cd handwriting_classifier
-   ```
+```bash
+git clone https://github.com/...
+cd handwriting_analysis
+```
 
-2. Create a virtual environment and activate it:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-   ```
+2. Create and activate a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+```
 
-3. Install the required packages:
-   ```
-   pip install -r requirements.txt
-   ```
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-4. Place your raw data files (T01.csv to T34.csv) in the `data/raw/` directory.
+## Data Preparation
+Place your CSV files in the data directory with the following naming convention:
+- T01.csv to T34.csv
+- Each file should contain columns for:
+  - Subject_ID
+  - Feature vectors (velocity, acceleration, slant)
+  - Label (0: healthy, 1: Alzheimer's)
+  - Segment (temporal order)
+
+## Configuration
+The project uses Hydra for configuration management. Key configuration files:
+- `conf/config.yaml`: Main configuration
+- `conf/data/data.yaml`: Data loading parameters
+- `conf/model/lstm.yaml`: LSTM model parameters
+- `conf/model/attention.yaml`: Attention model parameters
+- `conf/training/training.yaml`: Training hyperparameters
 
 ## Usage
 
-The project is divided into two main steps: data processing and model training/evaluation.
+### Training
+```bash
+# Train with default configuration (LSTM)
+python src/main.py
 
-### Data Processing
+# Train with attention model
+python src/main.py model=attention
 
-To process the raw data:
-
-```
-python src/process.py
-```
-
-This will read the raw CSV files, preprocess the data, and save the processed datasets in the `data/processed/` directory.
-
-You can modify the processing parameters in `config/process/process1.yaml` or create a new configuration file and specify it when running:
-
-```
-python src/process.py process=process2
+# Modify hyperparameters
+python src/main.py model=lstm data.batch_size=64 training.learning_rate=0.001
 ```
 
-### Model Training and Evaluation
+### Experiment Tracking
+The project uses Weights & Biases for experiment tracking. To view results:
+1. Login to your W&B account: `wandb login`
+2. Run training
+3. View results in the W&B dashboard
 
-To train the model and evaluate its performance:
+## Model Architectures
 
-```
-python src/train_model.py
-```
+### LSTM Model
+- Bidirectional LSTM layers
+- Task-specific embeddings
+- Dropout for regularization
 
-This will train the LSTM model on the processed data, evaluate it on the test set, perform cross-validation, and save the trained model in the `data/final/` directory.
+### Attention Model
+- Multi-head attention mechanism
+- Positional encoding
+- Task-specific embeddings
 
-You can modify the model and training parameters in `config/model/model1.yaml` or create a new configuration file and specify it when running:
-
-```
-python src/train_model.py model=model2
-```
-
-## Configuration
-
-The project uses Hydra for configuration management. The main configuration file is `config/main.yaml`, which includes:
-
-- Data paths
-- Training parameters
-- Model selection
-- Processing parameters
-
-You can override any configuration parameter from the command line. For example:
-
-```
-python src/train_model.py model.hidden_size=256 training.learning_rate=0.0005
-```
-
-## Project Components
-
-- `src/process.py`: Handles data loading, preprocessing, and splitting.
-- `src/train_model.py`: Manages model training, evaluation, and cross-validation.
-- `src/utils.py`: Contains utility functions and classes, including the LSTM model definition.
-- `config/`: Contains all configuration files for data processing, model architecture, and training parameters.
-
-## Testing
-
-Run the tests using:
-
-```
-python -m pytest tests/
-```
+## Results
+Models are evaluated using:
+- Accuracy
+- Precision
+- Recall
+- F1 Score
 
 ## Contributing
-
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
-
-University of Cassino and the Southern Lazio
+This project is licensed under the MIT License - see the LICENSE file for details.

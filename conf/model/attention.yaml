@@ -1,0 +1,5 @@
+model:
+  type: "attention"
+  input_size: 64
+  hidden_size: 128
+  dropout: 0.3
