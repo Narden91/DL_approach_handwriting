@@ -1,5 +1,7 @@
 import sys
 
+import pandas as pd
+
 sys.dont_write_bytecode = True
 
 import hydra
@@ -13,6 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from src.data.datamodule import HandwritingDataModule
+from src.models.RNN import RNN
 from src.utils.print_info import check_cuda_availability, print_dataset_info
 
 
@@ -20,63 +23,81 @@ from src.utils.print_info import check_cuda_availability, print_dataset_info
 def main(cfg: DictConfig) -> None:
     """Main training function."""
     try:
-        rprint("[bold blue]Starting Handwriting Analysis Experiment[/bold blue]")
-        
-        # Check CUDA availability
+        rprint("[bold blue]Starting Handwriting Analysis with 5-Fold Cross Validation[/bold blue]")
         check_cuda_availability()
+        fold_metrics = []
         
-        # Print configuration
-        rprint("\n[yellow]Configuration:[/yellow]")
-        rprint(f"Experiment Name: {cfg.experiment_name}")
-        rprint(f"Random Seed: {cfg.seed}")
-        rprint(f"Device: {cfg.device}")
+        for fold in range(5):
+            rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
+            
+            # Initialize data module
+            data_module = HandwritingDataModule(
+                data_dir=cfg.data.data_dir,
+                batch_size=cfg.data.batch_size,
+                window_size=cfg.data.window_size,
+                stride=cfg.data.stride,
+                num_workers=cfg.data.num_workers,
+                num_tasks=cfg.data.num_tasks,
+                file_pattern=cfg.data.file_pattern,
+                column_names=dict(cfg.data.columns),
+                fold=fold,
+                n_folds=5,
+                scaler_type=cfg.data.scaler,
+                seed=cfg.seed
+            )
+            
+            data_module.setup()
+            
+            # Initialize model
+            model = RNN(input_size=data_module.get_feature_dim())
+            model.model_config = {
+                'learning_rate': cfg.training.learning_rate,
+                'weight_decay': cfg.training.weight_decay
+            }
+            
+            # Initialize logger
+            logger = pl.loggers.CSVLogger(
+                save_dir="logs",
+                name=f"fold_{fold}"
+            )
+            
+            # Setup trainer
+            trainer = pl.Trainer(
+                max_epochs=cfg.training.max_epochs,
+                accelerator='gpu' if cfg.device == 'cuda' else 'cpu',
+                callbacks=[
+                    EarlyStopping(monitor='val_loss', patience=cfg.training.early_stopping_patience),
+                    ModelCheckpoint(dirpath=f"checkpoints/fold_{fold}", filename=f"model_fold_{fold}", monitor='val_loss')
+                ],
+                gradient_clip_val=cfg.training.gradient_clip_val,
+                logger=logger
+            )
+            
+            trainer.fit(model, data_module)
+            
+            fold_metrics.append({
+                'fold': fold + 1,
+                'val_loss': trainer.callback_metrics['val_loss'].item(),
+                'val_acc': trainer.callback_metrics['val_acc'].item(),
+                'val_f1': trainer.callback_metrics['val_f1'].item()
+            })
+
+            rprint(f"\n[bold cyan]Fold {fold + 1}/5 completed![/bold cyan]")
+            rprint(f"Validation Loss: {trainer.callback_metrics['val_loss']:.4f}")
+            rprint(f"Validation Accuracy: {trainer.callback_metrics['val_acc']:.4f}")
+            rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
+            
+            break
         
-        rprint("\n[yellow]Data Configuration:[/yellow]")
-        rprint(f"Data Directory: {cfg.data.data_dir}")
-        rprint(f"Window Size: {cfg.data.window_size}")
-        rprint(f"Stride: {cfg.data.stride}")
-        rprint(f"Batch Size: {cfg.data.batch_size}")
-        rprint(f"Num Workers: {cfg.data.num_workers}")
-        rprint(f"Validation Split: {cfg.data.val_split}")
-        rprint(f"Test Split: {cfg.data.test_split}")
         
-        # Set random seeds
-        pl.seed_everything(cfg.seed, workers=True)
+        metrics_df = pd.DataFrame(fold_metrics)
+        rprint("\n[bold blue]Cross Validation Results:[/bold blue]")
+        rprint(metrics_df.to_string())
         
-        rprint("\n[green]Initializing data module...[/green]")
-        
-        # Initialize data module
-        data_module = HandwritingDataModule(
-            data_dir=cfg.data.data_dir,
-            batch_size=cfg.data.batch_size,
-            window_size=cfg.data.window_size,
-            stride=cfg.data.stride,
-            num_workers=cfg.data.num_workers,
-            val_split=cfg.data.val_split,
-            test_split=cfg.data.test_split,
-            num_tasks=cfg.data.num_tasks,
-            file_pattern=cfg.data.file_pattern,
-            column_names=dict(cfg.data.columns),
-            seed=cfg.seed
-        )
-        
-        # Setup data module
-        data_module.setup()
-        
-        # Print detailed dataset information
-        print_dataset_info(data_module)
-        
-        # Get example batch information
-        train_loader = data_module.train_dataloader()
-        features, labels, task_ids, masks = next(iter(train_loader))
-        
-        rprint("\n[yellow]Example Batch Information:[/yellow]")
-        rprint(f"Features shape: {features.shape}")
-        rprint(f"Labels shape: {labels.shape}")
-        rprint(f"Task IDs shape: {task_ids.shape}")
-        rprint(f"Masks shape: {masks.shape}")
-        
-        rprint("\n[blue]Data Module Initialization Complete[/blue]")
+        mean_metrics = metrics_df.mean()
+        std_metrics = metrics_df.std()
+        for metric in ['val_loss', 'val_acc', 'val_f1']:
+            rprint(f"{metric}: {mean_metrics[metric]:.4f} ± {std_metrics[metric]:.4f}")
             
     except Exception as e:
         rprint(f"[red]Error in main function: {str(e)}[/red]")

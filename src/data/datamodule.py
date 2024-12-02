@@ -3,119 +3,117 @@ from typing import List, Optional, Tuple, Dict
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler, RobustScaler
 import torch
 from torch.utils.data import Dataset, DataLoader
 from rich import print as rprint
 
 
 class HandwritingDataset(Dataset):
-    def __init__(
-        self,
-        data: pd.DataFrame,
-        window_size: int,
-        stride: int,
-        feature_cols: List[str],
-        column_names: Dict[str, str],
-        scaler: Optional[StandardScaler] = None,
-        train: bool = True
-    ):
-        """Initialize the HandwritingDataset."""
-        # Make a deep copy of the data to avoid SettingWithCopyWarning
-        self.data = data.copy()
-        self.window_size = window_size
-        self.stride = stride
-        self.feature_cols = feature_cols
-        self.column_names = column_names
-        self.train = train
-        
-        # Separate features and labels
-        self.features_df = self.data[feature_cols]
-        self.labels_df = self.data[self.column_names['label']]
-        
-        rprint(f"[blue]Features shape: {self.features_df.shape}, Labels shape: {self.labels_df.shape}[/blue]")
-        
-        # Normalize features
-        if scaler is None and train:
-            self.scaler = StandardScaler()
-            self.features_df = pd.DataFrame(
-                self.scaler.fit_transform(self.features_df),
-                columns=self.features_df.columns,
-                index=self.features_df.index
-            )
-            rprint("[green]Fitted new StandardScaler on training data[/green]")
-        elif scaler is not None:
-            self.scaler = scaler
-            self.features_df = pd.DataFrame(
-                self.scaler.transform(self.features_df),
-                columns=self.features_df.columns,
-                index=self.features_df.index
-            )
-            rprint("[green]Applied existing StandardScaler to data[/green]")
-        
-        # Create windows for each subject and task
-        self.windows = self._create_windows()
-        
-        rprint(f"[blue]Created dataset with {len(self.windows)} windows[/blue]")
-    
-    def _create_windows(self) -> List[Tuple[int, int, int, List[int]]]:
-        """Create sliding windows for each subject and task combination."""
-        windows = []
-        
-        # Get unique subjects and tasks
-        subjects = self.data.index.get_level_values(0).unique()
-        tasks = self.data[self.column_names['task']].unique()
-        
-        for subject in subjects:
-            for task in tasks:
-                # Get indices for this subject and task
-                mask = (self.data.index.get_level_values(0) == subject) & \
-                      (self.data[self.column_names['task']] == task)
-                indices = np.where(mask)[0]
-                
-                if len(indices) == 0:
-                    continue
-                
-                if len(indices) < self.window_size:
-                    windows.append((subject, task, len(indices), indices.tolist()))
-                else:
-                    for start_idx in range(0, len(indices) - self.window_size + 1, self.stride):
-                        end_idx = start_idx + self.window_size
-                        window_indices = indices[start_idx:end_idx].tolist()
-                        windows.append((subject, task, self.window_size, window_indices))
-        
-        return windows
-    
-    def __len__(self) -> int:
-        return len(self.windows)
-    
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        subject_id, task_id, window_size, indices = self.windows[idx]
-        
-        # Get feature window using iloc for positional indexing
-        features_window = self.features_df.iloc[indices].values
-        
-        # Get label (consistent within window)
-        label = self.labels_df.iloc[indices[0]]
-        
-        # Create padding if necessary
-        if len(features_window) < self.window_size:
-            padding = np.zeros((self.window_size - len(features_window), len(self.feature_cols)))
-            features_window = np.vstack([features_window, padding])
-            
-            # Create attention mask (1 for real data, 0 for padding)
-            mask = torch.zeros(self.window_size)
-            mask[:len(features_window)] = 1
-        else:
-            mask = torch.ones(self.window_size)
-        
-        # Convert to tensors
-        features = torch.FloatTensor(features_window)
-        label = torch.LongTensor([label])
-        task = torch.LongTensor([task_id])
-        
-        return features, label, task, mask
+   def __init__(
+       self,
+       data: pd.DataFrame,
+       window_size: int,
+       stride: int,
+       feature_cols: List[str],
+       column_names: Dict[str, str],
+       scaler: Optional[object] = None,
+       scaler_type: str = "standard",
+       train: bool = True
+   ):
+       """Initialize the HandwritingDataset."""
+       self.data = data.copy()
+       self.window_size = window_size
+       self.stride = stride
+       self.feature_cols = feature_cols
+       self.column_names = column_names
+       self.train = train
+       
+       # Separate features and labels
+       self.features_df = self.data[feature_cols]
+       self.labels_df = self.data[self.column_names['label']]
+       
+       # Initialize and apply normalization
+       if scaler is None and train:
+           self.scaler = StandardScaler() if scaler_type == "standard" else RobustScaler()
+           self.features_df = pd.DataFrame(
+               self.scaler.fit_transform(self.features_df),
+               columns=self.features_df.columns,
+               index=self.features_df.index
+           )
+           print(f"Fitted new {self.scaler.__class__.__name__} on training data")
+       elif scaler is not None:
+           self.scaler = scaler
+           self.features_df = pd.DataFrame(
+               self.scaler.transform(self.features_df),
+               columns=self.features_df.columns,
+               index=self.features_df.index
+           )
 
+       # Create windows for each subject and task
+       self.windows = self._create_windows()
+       print(f"Created dataset with {len(self.windows)} windows")
+
+   def _normalize_features(self):
+       """Additional normalization step"""
+       feature_means = self.features_df.mean()  
+       feature_stds = self.features_df.std()
+       self.features_df = (self.features_df - feature_means) / (feature_stds + 1e-8)
+       return self.features_df
+   
+   def _create_windows(self) -> List[Tuple[int, int, int, List[int]]]:
+       """Create sliding windows for each subject and task combination."""
+       windows = []
+       subjects = self.data.index.get_level_values(0).unique()
+       tasks = self.data[self.column_names['task']].unique()
+       
+       for subject in subjects:
+           for task in tasks:
+               mask = (self.data.index.get_level_values(0) == subject) & \
+                     (self.data[self.column_names['task']] == task)
+               indices = np.where(mask)[0]
+               
+               if len(indices) == 0:
+                   continue
+               
+               if len(indices) < self.window_size:
+                   windows.append((subject, task, len(indices), indices.tolist()))
+               else:
+                   for start_idx in range(0, len(indices) - self.window_size + 1, self.stride):
+                       end_idx = start_idx + self.window_size
+                       window_indices = indices[start_idx:end_idx].tolist()
+                       windows.append((subject, task, self.window_size, window_indices))
+       
+       return windows
+   
+   def __len__(self) -> int:
+       return len(self.windows)
+   
+   def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+       subject_id, task_id, window_size, indices = self.windows[idx]
+       
+       features_window = self.features_df.iloc[indices].values
+       label = self.labels_df.iloc[indices[0]]
+       
+       # Padding if necessary
+       if len(features_window) < self.window_size:
+           padding = np.zeros((self.window_size - len(features_window), len(self.feature_cols)))
+           features_window = np.vstack([features_window, padding])
+           mask = torch.zeros(self.window_size)
+           mask[:len(indices)] = 1
+       else:
+           mask = torch.ones(self.window_size)
+       
+       # Additional normalization per window
+       window_mean = np.mean(features_window, axis=0)
+       window_std = np.std(features_window, axis=0) + 1e-8
+       features_window = (features_window - window_mean) / window_std
+       
+       features = torch.FloatTensor(features_window)
+       label = torch.LongTensor([label])
+       task = torch.LongTensor([task_id])
+       
+       return features, label, task, mask
 
 
 class CustomLabelEncoder:
@@ -143,14 +141,14 @@ class HandwritingDataModule(pl.LightningDataModule):
         window_size: int,
         stride: int,
         num_workers: int,
-        val_split: float,
-        test_split: float,
         num_tasks: int,
         file_pattern: str,
         column_names: Dict[str, str],
+        fold: int = 0,
+        n_folds: int = 5,
+        scaler_type: str = "standard",
         seed: int = 42
     ):
-        """Initialize the data module."""
         super().__init__()
         self.save_hyperparameters()
         
@@ -159,11 +157,12 @@ class HandwritingDataModule(pl.LightningDataModule):
         self.window_size = window_size
         self.stride = stride
         self.num_workers = num_workers
-        self.val_split = val_split
-        self.test_split = test_split
         self.num_tasks = num_tasks
         self.file_pattern = file_pattern
         self.column_names = column_names
+        self.fold = fold
+        self.n_folds = n_folds
+        self.scaler_type = scaler_type.lower()
         self.seed = seed
         
         self.scaler = None
@@ -171,8 +170,10 @@ class HandwritingDataModule(pl.LightningDataModule):
         self.encoders = {
             'sex': LabelEncoder(),
             'work': LabelEncoder(),
-            'label': CustomLabelEncoder()  # Using custom encoder for Label
+            'label': CustomLabelEncoder()
         }
+        
+        rprint(f"[blue]Initialized DataModule for fold {fold + 1}/{n_folds}[/blue]")
 
     def _preprocess_categorical(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -247,82 +248,64 @@ class HandwritingDataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         """Load and preprocess the data."""
-        rprint("[yellow]Setting up data...[/yellow]")
+        rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]")
         
         # Load or aggregate data
         data = self._load_or_aggregate_data()
-        
-        # Preprocess categorical variables
         data = self._preprocess_categorical(data)
         
-        # Update column names to use encoded versions
+        # Update column names and set features
         if 'Label' in self.column_names.values():
             self.column_names = {k: v + '_encoded' if v == 'Label' else v 
                             for k, v in self.column_names.items()}
         
-        # Define metadata columns (these should not be features)
         metadata_cols = [
-            self.column_names['id'],        # Id column
-            self.column_names['segment'],   # Segment column
-            self.column_names['task'],      # Task column
-            self.column_names['label']      # Label column
+            self.column_names['id'],
+            self.column_names['segment'],
+            self.column_names['task'],
+            self.column_names['label']
         ]
         
-        # Get feature columns (excluding metadata and including encoded categorical features)
-        self.feature_cols = [
-            col for col in data.columns 
-            if col not in metadata_cols and 
-            col not in ['Id', 'Segment'] and  # Ensure original Id/Segment are excluded
-            not col.endswith('_label')  # Exclude any label-related columns
-        ]
+        self.feature_cols = [col for col in data.columns 
+                        if col not in metadata_cols and 
+                        col not in ['Id', 'Segment'] and
+                        not col.endswith('_label')]
         
-        # Print feature information
-        rprint("\n[bold cyan]Data Column Information:[/bold cyan]")
-        rprint(f"[green]Metadata columns (excluded from features):[/green]")
-        for col in metadata_cols:
-            rprint(f"  - {col}")
-        
-        rprint(f"\n[green]Selected feature columns:[/green]")
-        for col in self.feature_cols:
-            rprint(f"  - {col}")
-        
-        # Validate that Id and Segment are not in features
-        assert all(col not in self.feature_cols for col in ['Id', 'Segment', 
-                                                        self.column_names['id'], 
-                                                        self.column_names['segment']]), \
-            "Id or Segment columns found in features!"
-        
-        # Set multi-index using Id and Segment
+        # Set multi-index
         data = data.set_index([self.column_names['id'], self.column_names['segment']])
-        rprint(f"\n[yellow]Data indexed by {self.column_names['id']} and {self.column_names['segment']}[/yellow]")
         
-        # Split data into train, val, test
+        # Create folds
         unique_subjects = data.index.get_level_values(0).unique()
         np.random.seed(self.seed)
         unique_subjects = np.random.permutation(unique_subjects)
         
-        n_subjects = len(unique_subjects)
-        n_test = int(n_subjects * self.test_split)
-        n_val = int(n_subjects * self.val_split)
+        # Split into folds
+        fold_size = len(unique_subjects) // self.n_folds
+        test_size = fold_size  # One fold size for test set
         
-        test_subjects = unique_subjects[:n_test]
-        val_subjects = unique_subjects[n_test:n_test + n_val]
-        train_subjects = unique_subjects[n_test + n_val:]
-        
-        # Create datasets
         if stage == 'fit' or stage is None:
+            val_subjects = unique_subjects[self.fold * fold_size:(self.fold + 1) * fold_size]
+            train_subjects = np.concatenate([
+                unique_subjects[:self.fold * fold_size],
+                unique_subjects[(self.fold + 1) * fold_size:]
+            ])
+            
+            rprint(f"[green]Fold {self.fold + 1} split - Train: {len(train_subjects)} subjects, Val: {len(val_subjects)} subjects[/green]")
+            
             train_data = data[data.index.get_level_values(0).isin(train_subjects)]
+            val_data = data[data.index.get_level_values(0).isin(val_subjects)]
+            
             self.train_dataset = HandwritingDataset(
                 data=train_data,
                 window_size=self.window_size,
                 stride=self.stride,
                 feature_cols=self.feature_cols,
                 column_names=self.column_names,
+                scaler_type=self.scaler_type,
                 train=True
             )
             self.scaler = self.train_dataset.scaler
             
-            val_data = data[data.index.get_level_values(0).isin(val_subjects)]
             self.val_dataset = HandwritingDataset(
                 data=val_data,
                 window_size=self.window_size,
@@ -330,11 +313,16 @@ class HandwritingDataModule(pl.LightningDataModule):
                 feature_cols=self.feature_cols,
                 column_names=self.column_names,
                 scaler=self.scaler,
+                scaler_type=self.scaler_type,
                 train=False
             )
         
         if stage == 'test' or stage is None:
+            # For test stage, use the next fold as test set
+            test_fold = (self.fold + 1) % self.n_folds
+            test_subjects = unique_subjects[test_fold * fold_size:(test_fold + 1) * fold_size]
             test_data = data[data.index.get_level_values(0).isin(test_subjects)]
+            
             self.test_dataset = HandwritingDataset(
                 data=test_data,
                 window_size=self.window_size,
@@ -342,8 +330,10 @@ class HandwritingDataModule(pl.LightningDataModule):
                 feature_cols=self.feature_cols,
                 column_names=self.column_names,
                 scaler=self.scaler,
+                scaler_type=self.scaler_type,
                 train=False
             )
+            rprint(f"[green]Test set created with {len(test_subjects)} subjects[/green]")
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -351,25 +341,28 @@ class HandwritingDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=True
         )
-    
+
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=True
         )
-    
+
     def test_dataloader(self) -> DataLoader:
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=True
         )
     
     def get_feature_dim(self) -> int:

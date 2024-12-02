@@ -97,3 +97,7 @@ data/*/*
 
 # Notebooks
 notebooks/*
+
+checkpoints/*
+logs/*
+models/*
