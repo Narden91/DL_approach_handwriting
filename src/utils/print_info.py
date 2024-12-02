@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.box import ROUNDED
 import torch   
 import pandas as pd
-from data.datamodule import HandwritingDataModule
+from src.data.datamodule import HandwritingDataModule
 
 
 def check_cuda_availability():

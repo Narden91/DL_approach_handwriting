@@ -12,12 +12,11 @@ from rich import print as rprint
 from rich.panel import Panel
 from rich.table import Table
 
-from data.datamodule import HandwritingDataModule
-from utils.print_info import check_cuda_availability, print_dataset_info
+from src.data.datamodule import HandwritingDataModule
+from src.utils.print_info import check_cuda_availability, print_dataset_info
 
 
-
-@hydra.main(version_base="1.1", config_path="../conf", config_name="config")
+@hydra.main(version_base="1.1", config_path="./conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     """Main training function."""
     try:
