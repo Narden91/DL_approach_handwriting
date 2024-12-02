@@ -51,18 +51,10 @@ class RNN(pl.LightningModule):
         features, labels, task_ids, masks = batch
         logits = self(features, task_ids, masks)
         
-        # Debug prints
-        print(f"Labels: {labels.float().mean():.3f}")
-        print(f"Logits before sigmoid: {logits.mean():.3f}")
-        
         loss = F.binary_cross_entropy_with_logits(logits, labels.float())
-        print(f"Loss: {loss.item():.3f}")
         
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
         self.train_acc(torch.sigmoid(logits), labels)
-        self.log('train_loss', loss)
-        self.log('train_acc', self.train_acc)
-        
         return loss
     
     def validation_step(self, batch, batch_idx):
