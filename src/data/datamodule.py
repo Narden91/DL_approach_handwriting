@@ -3,10 +3,11 @@ from typing import List, Optional, Tuple, Dict
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 import torch
 from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import StandardScaler
 from rich import print as rprint
+
 
 class HandwritingDataset(Dataset):
     def __init__(
@@ -20,7 +21,8 @@ class HandwritingDataset(Dataset):
         train: bool = True
     ):
         """Initialize the HandwritingDataset."""
-        self.data = data
+        # Make a deep copy of the data to avoid SettingWithCopyWarning
+        self.data = data.copy()
         self.window_size = window_size
         self.stride = stride
         self.feature_cols = feature_cols
@@ -30,11 +32,11 @@ class HandwritingDataset(Dataset):
         # Normalize features
         if scaler is None and train:
             self.scaler = StandardScaler()
-            self.data[feature_cols] = self.scaler.fit_transform(self.data[feature_cols])
+            self.data.loc[:, feature_cols] = self.scaler.fit_transform(self.data[feature_cols])
             rprint("[green]Fitted new StandardScaler on training data[/green]")
         elif scaler is not None:
             self.scaler = scaler
-            self.data[feature_cols] = self.scaler.transform(self.data[feature_cols])
+            self.data.loc[:, feature_cols] = self.scaler.transform(self.data[feature_cols])
             rprint("[green]Applied existing StandardScaler to data[/green]")
         
         # Create windows for each subject and task
@@ -104,6 +106,24 @@ class HandwritingDataset(Dataset):
         
         return features, label, task, mask
 
+
+class CustomLabelEncoder:
+    """Custom label encoder to ensure specific mapping for health status."""
+    def __init__(self):
+        self.classes_ = np.array(['Sano', 'Malato'])  # 'Sano' -> 0, 'Malato' -> 1
+        self.mapping_ = {'Sano': 0, 'Malato': 1}
+    
+    def fit(self, y):
+        return self
+    
+    def transform(self, y):
+        return np.array([self.mapping_[val.strip()] for val in y])
+    
+    def fit_transform(self, y):
+        self.fit(y)
+        return self.transform(y)
+    
+    
 class HandwritingDataModule(pl.LightningDataModule):
     def __init__(
         self,
@@ -137,43 +157,94 @@ class HandwritingDataModule(pl.LightningDataModule):
         
         self.scaler = None
         self.feature_cols = None
-    
-    def prepare_data(self):
-        """Check if data files exist."""
-        missing_files = []
-        for i in range(1, self.num_tasks + 1):
-            file_path = self.data_dir / self.file_pattern.format(i)
-            if not file_path.exists():
-                missing_files.append(str(file_path))
+        self.encoders = {
+            'sex': LabelEncoder(),
+            'work': LabelEncoder(),
+            'label': CustomLabelEncoder()  # Using custom encoder for Label
+        }
+
+    def _preprocess_categorical(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Preprocess categorical columns by removing whitespace and encoding."""
+        df = df.copy()
         
-        if missing_files:
-            raise FileNotFoundError(
-                f"Missing data files:\n" + "\n".join(missing_files)
-            )
-    
-    def setup(self, stage: Optional[str] = None):
-        """Load and preprocess the data."""
-        rprint("[yellow]Loading and preprocessing data...[/yellow]")
+        # Strip whitespace from all string columns
+        for col in df.select_dtypes(include=['object']):
+            df[col] = df[col].str.strip()
         
-        # Load all CSV files
+        # Encode categorical variables
+        if 'Sex' in df.columns:
+            df['Sex_encoded'] = self.encoders['sex'].fit_transform(df['Sex'])
+            rprint(f"[blue]Encoded Sex values: {dict(zip(self.encoders['sex'].classes_, range(len(self.encoders['sex'].classes_))))}[/blue]")
+        
+        if 'Work' in df.columns:
+            df['Work_encoded'] = self.encoders['work'].fit_transform(df['Work'])
+            rprint(f"[blue]Encoded Work values: {dict(zip(self.encoders['work'].classes_, range(len(self.encoders['work'].classes_))))}[/blue]")
+        
+        if 'Label' in df.columns:
+            df['Label_encoded'] = self.encoders['label'].fit_transform(df['Label'])
+            rprint(f"[blue]Encoded Label values: {self.encoders['label'].mapping_}[/blue]")
+        
+        return df
+    
+    def _get_aggregated_data_path(self) -> Path:
+        """Get the path for the aggregated raw data CSV file."""
+        return Path(self.data_dir) / "aggregated_data.csv"
+
+    def _load_or_aggregate_data(self) -> pd.DataFrame:
+        """Load aggregated data if exists, otherwise aggregate from raw files."""
+        aggregated_path = self._get_aggregated_data_path()
+
+        # Check if aggregated data exists
+        if aggregated_path.exists():
+            rprint("[green]Loading existing aggregated data...[/green]")
+            return pd.read_csv(aggregated_path)
+        
+        rprint("[yellow]Aggregating data from raw files...[/yellow]")
+        # Load and aggregate all CSV files
         dfs = []
         for i in range(1, self.num_tasks + 1):
             file_path = self.data_dir / self.file_pattern.format(i)
             rprint(f"[blue]Loading {file_path}[/blue]")
             df = pd.read_csv(file_path)
+            
             if self.column_names['task'] not in df.columns:
                 df[self.column_names['task']] = i
             dfs.append(df)
         
+        # Concatenate all dataframes
         data = pd.concat(dfs, ignore_index=True)
-        rprint(f"[green]Loaded {len(dfs)} files with total {len(data)} rows[/green]")
+        
+        # Save aggregated data
+        data.to_csv(aggregated_path, index=False)
+        rprint(f"[green]Saved aggregated data to {aggregated_path}[/green]")
+        
+        return data
+
+    def setup(self, stage: Optional[str] = None):
+        """Load and preprocess the data."""
+        rprint("[yellow]Setting up data...[/yellow]")
+        
+        # Load or aggregate data
+        data = self._load_or_aggregate_data()
+        
+        # Preprocess categorical variables
+        data = self._preprocess_categorical(data)
+        
+        # Update column names to use encoded versions
+        if 'Label' in self.column_names.values():
+            self.column_names = {k: v + '_encoded' if v == 'Label' else v 
+                               for k, v in self.column_names.items()}
         
         # Identify feature columns
-        exclude_cols = list(self.column_names.values())
+        exclude_cols = (
+            list(self.column_names.values()) + 
+            ['Sex', 'Work', 'Label'] +  # Original categorical columns
+            ['Sex_encoded', 'Work_encoded', 'Label_encoded']  # Encoded columns
+        )
         self.feature_cols = [col for col in data.columns if col not in exclude_cols]
-        rprint(f"[blue]Identified {len(self.feature_cols)} feature columns[/blue]")
+        self.feature_cols.extend(['Sex_encoded', 'Work_encoded'])
         
-        # Split subjects into train, validation, and test sets
+        # Split data into train, val, test
         unique_subjects = data[self.column_names['id']].unique()
         np.random.seed(self.seed)
         np.random.shuffle(unique_subjects)
@@ -185,11 +256,6 @@ class HandwritingDataModule(pl.LightningDataModule):
         test_subjects = unique_subjects[:n_test]
         val_subjects = unique_subjects[n_test:n_test + n_val]
         train_subjects = unique_subjects[n_test + n_val:]
-        
-        rprint(f"[blue]Split {n_subjects} subjects into:[/blue]")
-        rprint(f"[blue]- Training: {len(train_subjects)} subjects[/blue]")
-        rprint(f"[blue]- Validation: {len(val_subjects)} subjects[/blue]")
-        rprint(f"[blue]- Test: {len(test_subjects)} subjects[/blue]")
         
         # Create datasets
         if stage == 'fit' or stage is None:
