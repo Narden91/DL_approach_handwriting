@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchmetrics import Accuracy, Precision, Recall, F1Score
+from torchmetrics import Accuracy, MatthewsCorrCoef, Precision, Recall, F1Score
 from rich import print as rprint
 
 class RNNDebugger:
@@ -47,16 +47,14 @@ class RNN(pl.LightningModule):
     def __init__(self, input_size: int = 13, hidden_size: int = 128, num_layers: int = 2):
         super().__init__()
         self.save_hyperparameters()
-        self.debugger = RNNDebugger()
         
-        # Metrics
         self.train_acc = Accuracy(task='binary')
         self.val_acc = Accuracy(task='binary')
         self.val_precision = Precision(task='binary')
         self.val_recall = Recall(task='binary')
         self.val_f1 = F1Score(task='binary')
+        self.val_mcc = MatthewsCorrCoef(task='binary')
         
-        # Model layers with NaN protection
         self.layer_norm = nn.LayerNorm(input_size, eps=1e-5)
         self.input_norm = nn.BatchNorm1d(input_size, eps=1e-5, momentum=0.1)
         self.rnn = nn.RNN(
@@ -68,7 +66,6 @@ class RNN(pl.LightningModule):
             bidirectional=True
         )
         
-        # Initialize RNN weights with smaller values
         for name, param in self.rnn.named_parameters():
             if 'weight' in name:
                 nn.init.xavier_uniform_(param, gain=0.1)
@@ -78,6 +75,15 @@ class RNN(pl.LightningModule):
         self.classifier = nn.Linear(hidden_size * 2, 1)
         
         rprint(f"[green]Initialized RNN with input_size={input_size}, hidden_size={hidden_size}, num_layers={num_layers}[/green]")
+    
+    def forward(self, x, task_ids, masks): 
+        x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
+        x = torch.clamp(x, -10, 10)
+        x = self.input_norm(x.transpose(1,2)).transpose(1,2)
+        outputs, _ = self.rnn(x)
+        outputs = F.relu(outputs)
+        outputs = F.dropout(outputs, p=0.1, training=self.training)
+        return self.classifier(outputs[:, -1, :])
     
     def debug_forward(self, features, task_ids, masks):
         try:
@@ -102,33 +108,10 @@ class RNN(pl.LightningModule):
         except Exception as e:
             rprint(f"[red]Error in forward pass: {str(e)}[/red]")
             return False
-
-    def forward(self, x, task_ids, masks): 
-        # Handle NaN inputs
-        x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
-        
-        # Apply normalization with gradient clipping
-        with torch.no_grad():
-            x = torch.clamp(x, -10, 10)
-        
-        x = self.input_norm(x.transpose(1,2)).transpose(1,2)
-        outputs, _ = self.rnn(x)
-        
-        # Apply activation and dropout for stability
-        outputs = F.relu(outputs)
-        outputs = F.dropout(outputs, p=0.1, training=self.training)
-        
-        return self.classifier(outputs[:, -1, :])
     
     def training_step(self, batch, batch_idx):
         features, labels, task_ids, masks = batch
-        
-        # Handle NaN in features
         features = torch.where(torch.isnan(features), torch.zeros_like(features), features)
-        
-        if batch_idx == 0:
-            self.debug_forward(features, task_ids, masks)
-        
         logits = self(features, task_ids, masks)
         loss = F.binary_cross_entropy_with_logits(logits, labels.float())
         
@@ -137,9 +120,6 @@ class RNN(pl.LightningModule):
             self.train_acc(torch.sigmoid(logits), labels)
             self.log('train_acc', self.train_acc)
             return loss
-        else:
-            rprint("[red]NaN loss detected in training step[/red]")
-            return None
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -151,14 +131,6 @@ class RNN(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         features, labels, task_ids, masks = batch
-        
-        # Debug first validation batch
-        if batch_idx == 0:
-            rprint("\n[bold cyan]====== Debug Information - Validation Step ======[/bold cyan]")
-            forward_ok = self.debug_forward(features, task_ids, masks)
-            if not forward_ok:
-                return None
-        
         logits = self(features, task_ids, masks)
         loss = F.binary_cross_entropy_with_logits(logits, labels.float())
         
@@ -167,11 +139,13 @@ class RNN(pl.LightningModule):
         self.val_precision(preds, labels)
         self.val_recall(preds, labels)
         self.val_f1(preds, labels)
+        self.val_mcc(preds, labels)
         
         self.log('val_loss', loss, prog_bar=True)
         self.log('val_acc', self.val_acc, prog_bar=True)
         self.log('val_precision', self.val_precision)
         self.log('val_recall', self.val_recall)
         self.log('val_f1', self.val_f1)
+        self.log('val_mcc', self.val_mcc)
         
         return loss

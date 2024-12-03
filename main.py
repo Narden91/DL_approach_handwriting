@@ -74,26 +74,23 @@ def main(cfg: DictConfig) -> None:
                 logger=logger
             )
             
-            # Debug first batch before training
-            rprint("[bold yellow]Debugging first batch before training...[/bold yellow]")
-            features, labels, task_ids, masks = next(iter(data_module.train_dataloader()))
-            model.debug_forward(features, task_ids, masks)
-            
             trainer.fit(model, data_module)
             
             fold_metrics.append({
                 'fold': fold + 1,
                 'val_loss': trainer.callback_metrics['val_loss'].item(),
                 'val_acc': trainer.callback_metrics['val_acc'].item(),
-                'val_f1': trainer.callback_metrics['val_f1'].item()
+                'val_f1': trainer.callback_metrics['val_f1'].item(),
+                'val_mcc': trainer.callback_metrics['val_mcc'].item()
             })
 
             rprint(f"\n[bold cyan]Fold {fold + 1}/5 completed![/bold cyan]")
             rprint(f"Validation Loss: {trainer.callback_metrics['val_loss']:.4f}")
             rprint(f"Validation Accuracy: {trainer.callback_metrics['val_acc']:.4f}")
             rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
+            rprint(f"Validation MCC: {trainer.callback_metrics['val_mcc']:.4f}")
             
-            if fold == 1:
+            if fold == 0:
                 break
         
         metrics_df = pd.DataFrame(fold_metrics)
@@ -102,7 +99,7 @@ def main(cfg: DictConfig) -> None:
         
         mean_metrics = metrics_df.mean()
         std_metrics = metrics_df.std()
-        for metric in ['val_loss', 'val_acc', 'val_f1']:
+        for metric in ['val_loss', 'val_acc', 'val_f1', 'val_mcc']:
             rprint(f"{metric}: {mean_metrics[metric]:.4f} ± {std_metrics[metric]:.4f}")
             
     except Exception as e:
