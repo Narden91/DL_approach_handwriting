@@ -30,7 +30,6 @@ def main(cfg: DictConfig) -> None:
         for fold in range(5):
             rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
             
-            # Initialize data module
             data_module = HandwritingDataModule(
                 data_dir=cfg.data.data_dir,
                 batch_size=cfg.data.batch_size,
@@ -47,31 +46,38 @@ def main(cfg: DictConfig) -> None:
             )
             
             data_module.setup()
+            print_dataset_info(data_module)
             
-            # Initialize model
             model = RNN(input_size=data_module.get_feature_dim())
             model.model_config = {
                 'learning_rate': cfg.training.learning_rate,
                 'weight_decay': cfg.training.weight_decay
             }
             
-            # Initialize logger
             logger = pl.loggers.CSVLogger(
                 save_dir="logs",
                 name=f"fold_{fold}"
             )
             
-            # Setup trainer
             trainer = pl.Trainer(
                 max_epochs=cfg.training.max_epochs,
                 accelerator='gpu' if cfg.device == 'cuda' else 'cpu',
                 callbacks=[
                     EarlyStopping(monitor='val_loss', patience=cfg.training.early_stopping_patience),
-                    ModelCheckpoint(dirpath=f"checkpoints/fold_{fold}", filename=f"model_fold_{fold}", monitor='val_loss')
+                    ModelCheckpoint(
+                        dirpath=f"checkpoints/fold_{fold}",
+                        filename=f"model_fold_{fold}",
+                        monitor='val_loss'
+                    )
                 ],
                 gradient_clip_val=cfg.training.gradient_clip_val,
                 logger=logger
             )
+            
+            # Debug first batch before training
+            rprint("[bold yellow]Debugging first batch before training...[/bold yellow]")
+            features, labels, task_ids, masks = next(iter(data_module.train_dataloader()))
+            model.debug_forward(features, task_ids, masks)
             
             trainer.fit(model, data_module)
             
@@ -87,8 +93,8 @@ def main(cfg: DictConfig) -> None:
             rprint(f"Validation Accuracy: {trainer.callback_metrics['val_acc']:.4f}")
             rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
             
-            break
-        
+            if fold == 1:
+                break
         
         metrics_df = pd.DataFrame(fold_metrics)
         rprint("\n[bold blue]Cross Validation Results:[/bold blue]")

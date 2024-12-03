@@ -10,89 +10,91 @@ from rich import print as rprint
 
 
 class HandwritingDataset(Dataset):
-   def __init__(
-       self,
-       data: pd.DataFrame,
-       window_size: int,
-       stride: int,
-       feature_cols: List[str],
-       column_names: Dict[str, str],
-       scaler: Optional[object] = None,
-       scaler_type: str = "standard",
-       train: bool = True
-   ):
-       """Initialize the HandwritingDataset."""
-       self.data = data.copy()
-       self.window_size = window_size
-       self.stride = stride
-       self.feature_cols = feature_cols
-       self.column_names = column_names
-       self.train = train
-       
-       # Separate features and labels
-       self.features_df = self.data[feature_cols]
-       self.labels_df = self.data[self.column_names['label']]
-       
-       # Initialize and apply normalization
-       if scaler is None and train:
-           self.scaler = StandardScaler() if scaler_type == "standard" else RobustScaler()
-           self.features_df = pd.DataFrame(
-               self.scaler.fit_transform(self.features_df),
-               columns=self.features_df.columns,
-               index=self.features_df.index
-           )
-           print(f"Fitted new {self.scaler.__class__.__name__} on training data")
-       elif scaler is not None:
-           self.scaler = scaler
-           self.features_df = pd.DataFrame(
-               self.scaler.transform(self.features_df),
-               columns=self.features_df.columns,
-               index=self.features_df.index
-           )
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        window_size: int,
+        stride: int,
+        feature_cols: List[str],
+        column_names: Dict[str, str],
+        scaler: Optional[object] = None,
+        scaler_type: str = "standard",
+        train: bool = True
+    ):
+        """Initialize the HandwritingDataset."""
+        self.data = data.copy()
+        self.window_size = window_size
+        self.stride = stride
+        self.feature_cols = feature_cols
+        self.column_names = column_names
+        self.train = train
+        
+        # Separate features and labels
+        self.features_df = self.data[feature_cols]
+        self.labels_df = self.data[self.column_names['label']]
+        
+        # Initialize and apply normalization
+        if scaler is None and train:
+            self.scaler = StandardScaler() if scaler_type == "standard" else RobustScaler()
+            self.features_df = pd.DataFrame(
+                self.scaler.fit_transform(self.features_df),
+                columns=self.features_df.columns,
+                index=self.features_df.index
+            )
+            print(f"Fitted new {self.scaler.__class__.__name__} on training data")
+        elif scaler is not None:
+            self.scaler = scaler
+            self.features_df = pd.DataFrame(
+                self.scaler.transform(self.features_df),
+                columns=self.features_df.columns,
+                index=self.features_df.index
+            )
 
-       # Create windows for each subject and task
-       self.windows = self._create_windows()
-       print(f"Created dataset with {len(self.windows)} windows")
+        # Create windows for each subject and task
+        self.windows = self._create_windows()
+        print(f"Created dataset with {len(self.windows)} windows")
 
-   def _normalize_features(self):
-       """Additional normalization step"""
-       feature_means = self.features_df.mean()  
-       feature_stds = self.features_df.std()
-       self.features_df = (self.features_df - feature_means) / (feature_stds + 1e-8)
-       return self.features_df
-   
-   def _create_windows(self) -> List[Tuple[int, int, int, List[int]]]:
-       """Create sliding windows for each subject and task combination."""
-       windows = []
-       subjects = self.data.index.get_level_values(0).unique()
-       tasks = self.data[self.column_names['task']].unique()
-       
-       for subject in subjects:
-           for task in tasks:
-               mask = (self.data.index.get_level_values(0) == subject) & \
-                     (self.data[self.column_names['task']] == task)
-               indices = np.where(mask)[0]
-               
-               if len(indices) == 0:
-                   continue
-               
-               if len(indices) < self.window_size:
-                   windows.append((subject, task, len(indices), indices.tolist()))
-               else:
-                   for start_idx in range(0, len(indices) - self.window_size + 1, self.stride):
-                       end_idx = start_idx + self.window_size
-                       window_indices = indices[start_idx:end_idx].tolist()
-                       windows.append((subject, task, self.window_size, window_indices))
-       
-       return windows
-   
-   def __len__(self) -> int:
-       return len(self.windows)
-   
-   def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _normalize_features(self):
+        """Additional normalization step"""
+        feature_means = self.features_df.mean()  
+        feature_stds = self.features_df.std()
+        self.features_df = (self.features_df - feature_means) / (feature_stds + 1e-8)
+        return self.features_df
+
+    def _create_windows(self) -> List[Tuple[int, int, int, List[int]]]:
+        """Create sliding windows for each subject and task combination."""
+        windows = []
+        subjects = self.data.index.get_level_values(0).unique()
+        tasks = self.data[self.column_names['task']].unique()
+        
+        for subject in subjects:
+            for task in tasks:
+                mask = (self.data.index.get_level_values(0) == subject) & \
+                        (self.data[self.column_names['task']] == task)
+                indices = np.where(mask)[0]
+                
+                if len(indices) == 0:
+                    continue
+                
+                if len(indices) < self.window_size:
+                    windows.append((subject, task, len(indices), indices.tolist()))
+                else:
+                    for start_idx in range(0, len(indices) - self.window_size + 1, self.stride):
+                        end_idx = start_idx + self.window_size
+                        window_indices = indices[start_idx:end_idx].tolist()
+                        windows.append((subject, task, self.window_size, window_indices))
+        
+        return windows
+
+    def __len__(self) -> int:
+        return len(self.windows)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         subject_id, task_id, window_size, indices = self.windows[idx]
         
-        features_window = self.features_df.iloc[indices].values
+        # Handle NaN values and extreme values
+        features_window = np.nan_to_num(self.features_df.iloc[indices].values, nan=0.0)
+        features_window = np.clip(features_window, -10, 10)
         label = self.labels_df.iloc[indices[0]]
         
         # Padding if necessary
@@ -104,23 +106,17 @@ class HandwritingDataset(Dataset):
         else:
             mask = torch.ones(self.window_size)
         
-        # Additional normalization per window
-        window_mean = np.mean(features_window, axis=0)
-        window_std = np.std(features_window, axis=0) + 1e-8
+        # Window normalization
+        window_mean = np.nanmean(features_window, axis=0)
+        window_std = np.nanstd(features_window, axis=0) + 1e-8
         features_window = (features_window - window_mean) / window_std
         
-        features = torch.FloatTensor(features_window)
-        label = torch.LongTensor([label])
-        task = torch.LongTensor([task_id])
-        
-        # rprint(f"[blue]Subject: {subject_id}[/blue]")
-        # rprint(f"[blue]Task: {task_id}[/blue]")
-        # rprint(f"[blue]Window size: {window_size}[/blue]")
-        # rprint(f"[blue]Indices: {indices}[/blue]")
-        # rprint(f"[blue]Features: {features.shape}[/blue]")
-        # rprint(f"[red] STOP [/red]")
-        
-        return features, label, task, mask
+        return (
+            torch.FloatTensor(features_window),
+            torch.LongTensor([label]),
+            torch.LongTensor([task_id]),
+            mask
+        )
 
 
 class CustomLabelEncoder:
