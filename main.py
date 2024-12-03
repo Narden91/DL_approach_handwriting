@@ -16,15 +16,33 @@ from rich.table import Table
 
 from src.data.datamodule import HandwritingDataModule
 from src.models.RNN import RNN
-from src.utils.print_info import check_cuda_availability, print_dataset_info
+from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info
+
+
+def set_global_seed(seed: int) -> None:
+    """Set seed for reproducibility across all libraries."""
+    import random
+    import numpy as np
+    import torch
+    import pytorch_lightning as pl
+    
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    pl.seed_everything(seed)
 
 
 @hydra.main(version_base="1.1", config_path="./conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     """Main training function."""
     try:
+        set_global_seed(cfg.seed)
         rprint("[bold blue]Starting Handwriting Analysis with 5-Fold Cross Validation[/bold blue]")
         check_cuda_availability()
+        
         fold_metrics = []
         
         for fold in range(5):
@@ -46,8 +64,10 @@ def main(cfg: DictConfig) -> None:
             )
             
             data_module.setup()
-            print_dataset_info(data_module)
             
+            print_feature_info(data_module) if cfg.verbose else None
+            print_dataset_info(data_module) if cfg.verbose else None
+                        
             model = RNN(input_size=data_module.get_feature_dim())
             model.model_config = {
                 'learning_rate': cfg.training.learning_rate,

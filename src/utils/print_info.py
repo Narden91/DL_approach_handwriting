@@ -126,3 +126,38 @@ def print_dataframe_head(df: pd.DataFrame, title: str, n_rows: int = 5):
         table.add_row(*(idx_values + row_values))
     
     rprint(table)
+    
+    
+def print_feature_info(data_module: HandwritingDataModule):
+    """Print detailed information about input features using rich formatting."""
+    feature_table = Table(
+        title="Input Feature Information",
+        show_header=True,
+        header_style="bold magenta",
+        box=ROUNDED
+    )
+    
+    feature_table.add_column("Category", style="cyan")
+    feature_table.add_column("Value", style="green")
+    
+    feature_table.add_row(
+        "Feature Dimension",
+        str(data_module.get_feature_dim())
+    )
+    
+    feature_list_table = Table(
+        title="Feature List",
+        show_header=True,
+        header_style="bold magenta",
+        box=ROUNDED
+    )
+    
+    feature_list_table.add_column("Index", style="cyan")
+    feature_list_table.add_column("Feature Name", style="green")
+    
+    for idx, feature in enumerate(data_module.feature_cols):
+        feature_list_table.add_row(str(idx), feature)
+    
+    rprint("\n[bold blue]Input Feature Details[/bold blue]")
+    rprint(feature_table)
+    rprint(feature_list_table)
