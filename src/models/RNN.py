@@ -35,12 +35,6 @@ class RNN(pl.LightningModule):
             if 'weight' in name:
                 nn.init.orthogonal_(param)
         
-        self.attention = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),  # *2 for bidirectional
-            nn.Tanh(),
-            nn.Linear(hidden_size, 1)
-        )
-        
         self.classifier = nn.Linear(hidden_size * 2, 1)  # *2 for bidirectional
         
         rprint(f"[green]Initialized RNN with input_size={input_size}, hidden_size={hidden_size}, num_layers={num_layers}[/green]")
@@ -49,6 +43,7 @@ class RNN(pl.LightningModule):
         x = self.input_norm(x.transpose(1,2)).transpose(1,2)
         outputs, _ = self.rnn(x)
         return self.classifier(outputs[:, -1, :]) # Get the last output and pass it through the classifier layer
+
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
