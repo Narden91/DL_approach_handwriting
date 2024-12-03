@@ -90,30 +90,37 @@ class HandwritingDataset(Dataset):
        return len(self.windows)
    
    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-       subject_id, task_id, window_size, indices = self.windows[idx]
-       
-       features_window = self.features_df.iloc[indices].values
-       label = self.labels_df.iloc[indices[0]]
-       
-       # Padding if necessary
-       if len(features_window) < self.window_size:
-           padding = np.zeros((self.window_size - len(features_window), len(self.feature_cols)))
-           features_window = np.vstack([features_window, padding])
-           mask = torch.zeros(self.window_size)
-           mask[:len(indices)] = 1
-       else:
-           mask = torch.ones(self.window_size)
-       
-       # Additional normalization per window
-       window_mean = np.mean(features_window, axis=0)
-       window_std = np.std(features_window, axis=0) + 1e-8
-       features_window = (features_window - window_mean) / window_std
-       
-       features = torch.FloatTensor(features_window)
-       label = torch.LongTensor([label])
-       task = torch.LongTensor([task_id])
-       
-       return features, label, task, mask
+        subject_id, task_id, window_size, indices = self.windows[idx]
+        
+        features_window = self.features_df.iloc[indices].values
+        label = self.labels_df.iloc[indices[0]]
+        
+        # Padding if necessary
+        if len(features_window) < self.window_size:
+            padding = np.zeros((self.window_size - len(features_window), len(self.feature_cols)))
+            features_window = np.vstack([features_window, padding])
+            mask = torch.zeros(self.window_size)
+            mask[:len(indices)] = 1
+        else:
+            mask = torch.ones(self.window_size)
+        
+        # Additional normalization per window
+        window_mean = np.mean(features_window, axis=0)
+        window_std = np.std(features_window, axis=0) + 1e-8
+        features_window = (features_window - window_mean) / window_std
+        
+        features = torch.FloatTensor(features_window)
+        label = torch.LongTensor([label])
+        task = torch.LongTensor([task_id])
+        
+        # rprint(f"[blue]Subject: {subject_id}[/blue]")
+        # rprint(f"[blue]Task: {task_id}[/blue]")
+        # rprint(f"[blue]Window size: {window_size}[/blue]")
+        # rprint(f"[blue]Indices: {indices}[/blue]")
+        # rprint(f"[blue]Features: {features.shape}[/blue]")
+        # rprint(f"[red] STOP [/red]")
+        
+        return features, label, task, mask
 
 
 class CustomLabelEncoder:

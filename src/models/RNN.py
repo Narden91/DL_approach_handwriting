@@ -20,24 +20,35 @@ class RNN(pl.LightningModule):
         self.val_f1 = F1Score(task='binary')
         
         # RNN layers
+        self.layer_norm = nn.LayerNorm(input_size)
         self.input_norm = nn.BatchNorm1d(input_size)
-        self.rnn = nn.RNN(input_size=input_size,
-                         hidden_size=hidden_size,
-                         num_layers=num_layers,
-                         batch_first=True,
-                         dropout=0.1)
+        self.rnn = nn.RNN(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=0.1,
+            bidirectional=True  # Enable bidirectional for better sequence understanding
+        )
         
         for name, param in self.rnn.named_parameters():
             if 'weight' in name:
                 nn.init.orthogonal_(param)
         
-        self.classifier = nn.Linear(hidden_size, 1)
+        self.attention = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),  # *2 for bidirectional
+            nn.Tanh(),
+            nn.Linear(hidden_size, 1)
+        )
+        
+        self.classifier = nn.Linear(hidden_size * 2, 1)  # *2 for bidirectional
+        
         rprint(f"[green]Initialized RNN with input_size={input_size}, hidden_size={hidden_size}, num_layers={num_layers}[/green]")
     
-    def forward(self, x, task_ids, masks):
+    def forward(self, x, task_ids, masks): 
         x = self.input_norm(x.transpose(1,2)).transpose(1,2)
         outputs, _ = self.rnn(x)
-        return self.classifier(outputs[:, -1, :])
+        return self.classifier(outputs[:, -1, :]) # Get the last output and pass it through the classifier layer
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -78,3 +89,4 @@ class RNN(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+        
