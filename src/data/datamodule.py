@@ -19,7 +19,8 @@ class HandwritingDataset(Dataset):
         column_names: Dict[str, str],
         scaler: Optional[object] = None,
         scaler_type: str = "standard",
-        train: bool = True
+        train: bool = True,
+        verbose: bool = True
     ):
         """Initialize the HandwritingDataset."""
         self.data = data.copy()
@@ -41,7 +42,7 @@ class HandwritingDataset(Dataset):
                 columns=self.features_df.columns,
                 index=self.features_df.index
             )
-            print(f"Fitted new {self.scaler.__class__.__name__} on training data")
+            rprint(f"Fitted new {self.scaler.__class__.__name__} on training data") if verbose else None
         elif scaler is not None:
             self.scaler = scaler
             self.features_df = pd.DataFrame(
@@ -52,7 +53,7 @@ class HandwritingDataset(Dataset):
 
         # Create windows for each subject and task
         self.windows = self._create_windows()
-        print(f"Created dataset with {len(self.windows)} windows")
+        rprint(f"Created dataset with {len(self.windows)} windows") if verbose else None
 
     def _normalize_features(self):
         """Additional normalization step"""
@@ -150,7 +151,8 @@ class HandwritingDataModule(pl.LightningDataModule):
         fold: int = 0,
         n_folds: int = 5,
         scaler_type: str = "standard",
-        seed: int = 42
+        seed: int = 42,
+        verbose: bool = True
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -167,6 +169,7 @@ class HandwritingDataModule(pl.LightningDataModule):
         self.n_folds = n_folds
         self.scaler_type = scaler_type.lower()
         self.seed = seed
+        self.verbose = verbose
         
         self.scaler = None
         self.feature_cols = None
@@ -176,7 +179,7 @@ class HandwritingDataModule(pl.LightningDataModule):
             'label': CustomLabelEncoder()
         }
         
-        rprint(f"[blue]Initialized DataModule for fold {fold + 1}/{n_folds}[/blue]")
+        rprint(f"[blue]Initialized DataModule for fold {fold + 1}/{n_folds}[/blue]") if self.verbose else None
 
     def _preprocess_categorical(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -196,21 +199,21 @@ class HandwritingDataModule(pl.LightningDataModule):
         if 'Sex' in df.columns:
             df['Sex_encoded'] = self.encoders['sex'].fit_transform(df['Sex'])
             columns_to_drop.append('Sex')
-            rprint(f"[blue]Encoded Sex values: {dict(zip(self.encoders['sex'].classes_, range(len(self.encoders['sex'].classes_))))}[/blue]")
+            rprint(f"[blue]Encoded Sex values: {dict(zip(self.encoders['sex'].classes_, range(len(self.encoders['sex'].classes_))))}[/blue]") if self.verbose else None
         
         if 'Work' in df.columns:
             df['Work_encoded'] = self.encoders['work'].fit_transform(df['Work'])
             columns_to_drop.append('Work')
-            rprint(f"[blue]Encoded Work values: {dict(zip(self.encoders['work'].classes_, range(len(self.encoders['work'].classes_))))}[/blue]")
+            rprint(f"[blue]Encoded Work values: {dict(zip(self.encoders['work'].classes_, range(len(self.encoders['work'].classes_))))}[/blue]") if self.verbose else None
         
         if 'Label' in df.columns:
             df['Label_encoded'] = self.encoders['label'].fit_transform(df['Label'])
             columns_to_drop.append('Label')
-            rprint(f"[blue]Encoded Label values: {self.encoders['label'].mapping_}[/blue]")
+            rprint(f"[blue]Encoded Label values: {self.encoders['label'].mapping_}[/blue]") if self.verbose else None
         
         # Drop original categorical columns
         if columns_to_drop:
-            rprint(f"[yellow]Dropping original categorical columns: {columns_to_drop}[/yellow]")
+            rprint(f"[yellow]Dropping original categorical columns: {columns_to_drop}[/yellow]") if self.verbose else None
             df = df.drop(columns=columns_to_drop)
         
         return df
@@ -225,15 +228,15 @@ class HandwritingDataModule(pl.LightningDataModule):
 
         # Check if aggregated data exists
         if aggregated_path.exists():
-            rprint("[green]Loading existing aggregated data...[/green]")
+            rprint("[green]Loading existing aggregated data...[/green]") if self.verbose else None
             return pd.read_csv(aggregated_path)
         
-        rprint("[yellow]Aggregating data from raw files...[/yellow]")
+        rprint("[yellow]Aggregating data from raw files...[/yellow]") if self.verbose else None
         # Load and aggregate all CSV files
         dfs = []
         for i in range(1, self.num_tasks + 1):
             file_path = self.data_dir / self.file_pattern.format(i)
-            rprint(f"[blue]Loading {file_path}[/blue]")
+            rprint(f"[blue]Loading {file_path}[/blue]") if self.verbose else None
             df = pd.read_csv(file_path)
             
             if self.column_names['task'] not in df.columns:
@@ -245,13 +248,13 @@ class HandwritingDataModule(pl.LightningDataModule):
         
         # Save aggregated data
         data.to_csv(aggregated_path, index=False)
-        rprint(f"[green]Saved aggregated data to {aggregated_path}[/green]")
+        rprint(f"[green]Saved aggregated data to {aggregated_path}[/green]") if self.verbose else None
         
         return data
 
     def setup(self, stage: Optional[str] = None):
         """Load and preprocess the data."""
-        rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]")
+        rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]") if self.verbose else None
         
         # Load or aggregate data
         data = self._load_or_aggregate_data()
@@ -293,7 +296,7 @@ class HandwritingDataModule(pl.LightningDataModule):
                 unique_subjects[(self.fold + 1) * fold_size:]
             ])
             
-            rprint(f"[green]Fold {self.fold + 1} split - Train: {len(train_subjects)} subjects, Val: {len(val_subjects)} subjects[/green]")
+            rprint(f"[green]Fold {self.fold + 1} split - Train: {len(train_subjects)} subjects, Val: {len(val_subjects)} subjects[/green]") if self.verbose else None
             
             train_data = data[data.index.get_level_values(0).isin(train_subjects)]
             val_data = data[data.index.get_level_values(0).isin(val_subjects)]
@@ -305,7 +308,8 @@ class HandwritingDataModule(pl.LightningDataModule):
                 feature_cols=self.feature_cols,
                 column_names=self.column_names,
                 scaler_type=self.scaler_type,
-                train=True
+                train=True,
+                verbose=self.verbose
             )
             self.scaler = self.train_dataset.scaler
             
@@ -317,7 +321,8 @@ class HandwritingDataModule(pl.LightningDataModule):
                 column_names=self.column_names,
                 scaler=self.scaler,
                 scaler_type=self.scaler_type,
-                train=False
+                train=False,
+                verbose=self.verbose
             )
         
         if stage == 'test' or stage is None:
@@ -334,9 +339,10 @@ class HandwritingDataModule(pl.LightningDataModule):
                 column_names=self.column_names,
                 scaler=self.scaler,
                 scaler_type=self.scaler_type,
-                train=False
+                train=False,
+                verbose=self.verbose
             )
-            rprint(f"[green]Test set created with {len(test_subjects)} subjects[/green]")
+            rprint(f"[green]Test set created with {len(test_subjects)} subjects[/green]") if self.verbose else None
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

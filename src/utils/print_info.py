@@ -7,23 +7,24 @@ import pandas as pd
 from src.data.datamodule import HandwritingDataModule
 
 
-def check_cuda_availability():
+def check_cuda_availability(verbose: bool = True):
     """Check CUDA availability and print detailed information."""
     cuda_available = torch.cuda.is_available()
     
-    rprint(Panel.fit(
-        f"[bold blue]CUDA Information:[/bold blue]\n"
-        f"CUDA Available: [green]{cuda_available}[/green]\n"
-        f"PyTorch Version: [yellow]{torch.__version__}[/yellow]"
-    ))
-    
-    if cuda_available:
-        rprint(f"CUDA Version: [yellow]{torch.version.cuda}[/yellow]")
-        rprint(f"Current Device: [yellow]{torch.cuda.current_device()}[/yellow]")
-        rprint(f"Device Name: [yellow]{torch.cuda.get_device_name(0)}[/yellow]")
-        rprint(f"Device Count: [yellow]{torch.cuda.device_count()}[/yellow]")
-        rprint(f"Memory Allocated: [yellow]{torch.cuda.memory_allocated(0) / 1024**2:.2f} MB[/yellow]")
-        rprint(f"Memory Cached: [yellow]{torch.cuda.memory_reserved(0) / 1024**2:.2f} MB[/yellow]")
+    if verbose:
+        rprint(Panel.fit(
+            f"[bold blue]CUDA Information:[/bold blue]\n"
+            f"CUDA Available: [green]{cuda_available}[/green]\n"
+            f"PyTorch Version: [yellow]{torch.__version__}[/yellow]"
+        ))
+        
+        if cuda_available:
+            rprint(f"CUDA Version: [yellow]{torch.version.cuda}[/yellow]")
+            rprint(f"Current Device: [yellow]{torch.cuda.current_device()}[/yellow]")
+            rprint(f"Device Name: [yellow]{torch.cuda.get_device_name(0)}[/yellow]")
+            rprint(f"Device Count: [yellow]{torch.cuda.device_count()}[/yellow]")
+            rprint(f"Memory Allocated: [yellow]{torch.cuda.memory_allocated(0) / 1024**2:.2f} MB[/yellow]")
+            rprint(f"Memory Cached: [yellow]{torch.cuda.memory_reserved(0) / 1024**2:.2f} MB[/yellow]")
         
         
 def print_dataset_info(data_module: HandwritingDataModule):

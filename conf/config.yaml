@@ -12,9 +12,9 @@ device: "cuda"
 
 data:
   data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
-  window_size: 10
-  stride: 25
-  batch_size: 32
+  window_size: 15
+  stride: 10
+  batch_size: 64
   num_workers: 4
   val_split: 0.2
   test_split: 0.1
@@ -28,19 +28,32 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 10
+  max_epochs: 20
   learning_rate: 0.00001
   weight_decay: 0.0001
-  early_stopping_patience: 10
-  gradient_clip_val: 1.0
+  early_stopping_patience: 5
+  gradient_clip_val: 1
   checkpoint_dir: "checkpoints"
 
 model:
-  hidden_size: 256  # Increased from 128
-  num_layers: 3     # Increased from 2
-  dropout: 0.2      # Increased from 0.1
+  type: "lstm"  # Options: "rnn" or "lstm"
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.1
   bidirectional: true
-  input_dropout: 0.1
-  layer_norm_eps: 1e-5
-  batch_norm_momentum: 0.1
-  bias_init: 1.0    # Forget gate bias initialization
+  lstm_specific:
+    hidden_size: 256  # Reduced from 256
+    num_layers: 3    # Reduced from 3
+    dropout: 0.2     # Increased dropout
+    proj_size: 32    # Reduced from 64
+    layer_norm: true
+  rnn_specific:
+    hidden_size: 128
+    num_layers: 2
+    dropout: 0.1
+  
+gpu_settings:
+  gpu_id: 0  # Specify which GPU to use
+  precision: 32  # Can be 16 for mixed precision if needed
+
+version_base: "1.1"
