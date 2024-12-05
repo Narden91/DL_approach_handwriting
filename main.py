@@ -16,6 +16,7 @@ from rich.table import Table
 
 from src.data.datamodule import HandwritingDataModule
 from src.models.RNN import RNN
+from src.models.LSTM import LSTM
 from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info
 
 
@@ -67,8 +68,14 @@ def main(cfg: DictConfig) -> None:
             
             print_feature_info(data_module) if cfg.verbose else None
             print_dataset_info(data_module) if cfg.verbose else None
-                        
-            model = RNN(input_size=data_module.get_feature_dim())
+            
+            
+            if cfg.model.type == 'lstm':
+                model = LSTM(input_size=data_module.get_feature_dim())
+            else:
+                model = RNN(input_size=data_module.get_feature_dim())
+            
+            
             model.model_config = {
                 'learning_rate': cfg.training.learning_rate,
                 'weight_decay': cfg.training.weight_decay

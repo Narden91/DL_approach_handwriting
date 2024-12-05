@@ -1,114 +1,98 @@
-# Handwriting Analysis using Deep Learning and stroke approach for Alzheimer's Detection
+# Handwriting Analysis with Deep Learning
+
+A PyTorch Lightning-based project for analyzing handwriting data using RNN architectures for health status classification.
 
 ## Project Overview
-This project implements a deep learning pipeline for detecting Alzheimer's disease through handwriting analysis. The system processes handwriting data from multiple tasks and uses various deep learning architectures (LSTM, Attention) for binary classification.
 
-## Features
-- Multi-task handwriting analysis
-- Support for various deep learning architectures (LSTM, Attention)
-- Sliding window approach for handling variable sequence lengths
-- Comprehensive experiment tracking with Weights & Biases
-- Hydra-based configuration management
-- PyTorch Lightning implementation
+This project implements a deep learning approach to analyze handwriting data for health status classification. It uses a bidirectional RNN architecture with advanced preprocessing and cross-validation techniques to identify patterns in handwriting that may indicate health conditions.
 
 ## Project Structure
-```
-handwriting_analysis/
-├── conf/                     # Configuration files
-│   ├── config.yaml          # Main configuration
-│   ├── data/                # Data-related configs
-│   ├── model/               # Model architectures configs
-│   └── training/            # Training hyperparameters
-├── src/                     # Source code
-│   ├── main.py             # Main training script
-│   ├── data/               # Data loading and processing
-│   ├── models/             # Model implementations
-│   └── utils/              # Utility functions
-├── requirements.txt         # Project dependencies
-└── README.md               # This file
-```
 
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/...
-cd handwriting_analysis
+```
+├── conf/
+│   └── config.yaml           # Hydra configuration file
+├── src/
+│   ├── data/
+│   │   └── datamodule.py     # Data loading and preprocessing
+│   ├── models/
+│   │   ├── base.py           # Base model class
+│   │   └── RNN.py            # RNN model implementation
+│   └── utils/
+│       └── print_info.py     # Utility functions for information display
+├── main.py                   # Main training script
 ```
 
-2. Create and activate a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-```
+## Key Components
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+### Data Module (`datamodule.py`)
+- `HandwritingDataset`: Custom PyTorch dataset for handwriting data
+  - Handles sliding window creation
+  - Implements feature normalization
+  - Manages data preprocessing
+- `HandwritingDataModule`: PyTorch Lightning data module
+  - Manages train/val/test splits
+  - Implements k-fold cross-validation
+  - Handles data loading and preprocessing
 
-## Data Preparation
-Place your CSV files in the data directory with the following naming convention:
-- T01.csv to T34.csv
-- Each file should contain columns for:
-  - Subject_ID
-  - Feature vectors (velocity, acceleration, slant)
-  - Label (0: healthy, 1: Alzheimer's)
-  - Segment (temporal order)
+### Models
+- `BaseModel` (`base.py`): Abstract base class for models
+  - Defines common training and validation steps
+  - Implements metric tracking
+- `RNN` (`RNN.py`): Main model implementation
+  - Bidirectional RNN architecture
+  - Layer normalization and dropout
+  - Advanced gradient checking and debugging capabilities
+
+### Training (`main.py`)
+- Implements 5-fold cross-validation
+- Handles model training and validation
+- Includes early stopping and checkpointing
+- Provides detailed metrics logging
+
+## Features
+
+- **Data Preprocessing**
+  - Robust handling of categorical variables
+  - Advanced feature scaling (Standard/Robust)
+  - Sliding window approach for temporal data
+  - Automatic handling of missing values
+
+- **Model Architecture**
+  - Bidirectional RNN
+  - Batch normalization
+  - Dropout regularization
+  - Xavier initialization
+
+- **Training Features**
+  - K-fold cross-validation
+  - Early stopping
+  - Gradient clipping
+  - Comprehensive metrics tracking
+  - GPU acceleration support
 
 ## Configuration
-The project uses Hydra for configuration management. Key configuration files:
-- `conf/config.yaml`: Main configuration
-- `conf/data/data.yaml`: Data loading parameters
-- `conf/model/lstm.yaml`: LSTM model parameters
-- `conf/model/attention.yaml`: Attention model parameters
-- `conf/training/training.yaml`: Training hyperparameters
 
-## Usage
+The project uses Hydra for configuration management. Key configurations in `config.yaml`
 
-### Training
-```bash
-# Train with default configuration (LSTM)
-python src/main.py
+## Metrics
 
-# Train with attention model
-python src/main.py model=attention
-
-# Modify hyperparameters
-python src/main.py model=lstm data.batch_size=64 training.learning_rate=0.001
-```
-
-### Experiment Tracking
-The project uses Weights & Biases for experiment tracking. To view results:
-1. Login to your W&B account: `wandb login`
-2. Run training
-3. View results in the W&B dashboard
-
-## Model Architectures
-
-### LSTM Model
-- Bidirectional LSTM layers
-- Task-specific embeddings
-- Dropout for regularization
-
-### Attention Model
-- Multi-head attention mechanism
-- Positional encoding
-- Task-specific embeddings
-
-## Results
-Models are evaluated using:
+The model tracks multiple performance metrics:
 - Accuracy
 - Precision
 - Recall
 - F1 Score
+- Matthews Correlation Coefficient (MCC)
 
-## Contributing
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+## Usage
+
+1. Configure the data path in `config.yaml`
+2. Run training:
+```bash
+python main.py
+```
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+## Contributors
+
