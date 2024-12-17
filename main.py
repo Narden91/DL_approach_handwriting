@@ -112,7 +112,7 @@ def main(cfg: DictConfig) -> None:
         
         fold_metrics = []
         
-        for fold in range(5):
+        for fold in range(cfg.num_folds):
             rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
             
             data_module = HandwritingDataModule(
@@ -125,7 +125,7 @@ def main(cfg: DictConfig) -> None:
                 file_pattern=cfg.data.file_pattern,
                 column_names=dict(cfg.data.columns),
                 fold=fold,
-                n_folds=5,
+                n_folds=cfg.num_folds,
                 scaler_type=cfg.data.scaler,
                 seed=cfg.seed,
                 verbose=cfg.verbose
@@ -181,8 +181,8 @@ def main(cfg: DictConfig) -> None:
                 rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
                 rprint(f"Validation MCC: {trainer.callback_metrics['val_mcc']:.4f}")
             
-            if fold == 0:
-                break
+            # if fold == 0:
+            #     break
         
         metrics_df = pd.DataFrame(fold_metrics)
         rprint("\n[bold blue]Cross Validation Results:[/bold blue]")

@@ -7,6 +7,7 @@ hydra:
 
 seed: 42
 verbose: false
+num_folds: 5
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
@@ -28,10 +29,10 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 20
+  max_epochs: 50
   learning_rate: 0.00001
   weight_decay: 0.001
-  early_stopping_patience: 5
+  early_stopping_patience: 10
   gradient_clip_val: 1
   checkpoint_dir: "checkpoints"
 
@@ -42,10 +43,10 @@ model:
   dropout: 0.1
   bidirectional: true
   lstm_specific:
-    hidden_size: 256  # Reduced from 256
-    num_layers: 3    # Reduced from 3
-    dropout: 0.3     # Increased dropout
-    proj_size: 64    # Reduced from 64
+    hidden_size: 256  
+    num_layers: 3    
+    dropout: 0.3      
+    proj_size: 64     
     layer_norm: true
   rnn_specific:
     hidden_size: 128
