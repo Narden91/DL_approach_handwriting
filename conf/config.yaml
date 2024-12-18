@@ -8,13 +8,14 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
+test_mode: true
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
 data:
   data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
-  window_size: 25
-  stride: 15
+  window_sizes: [25, 50]  
+  strides: [10, 20, 30] 
   batch_size: 64
   num_workers: 4
   val_split: 0.2
