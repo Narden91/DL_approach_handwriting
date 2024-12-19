@@ -100,5 +100,6 @@ notebooks/*
 
 checkpoints/*
 logs/*
+output/*
 models/*
 plots/*
