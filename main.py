@@ -68,9 +68,25 @@ def configure_training(config):
         "enable_model_summary": True,
         "strategy": "auto",
         "sync_batchnorm": False,
-        "logger": False
+        "logger": False,
     }
     return trainer_config
+
+
+def get_predictions(trainer, model, dataloader):
+    model.eval()
+    all_preds = []
+    all_labels = []
+    all_subjects = []
+    with torch.no_grad():
+        for batch in dataloader:
+            features, labels, task_ids, masks = batch
+            logits = model(features, task_ids, masks)
+            preds = torch.sigmoid(logits).round().cpu().numpy()
+            all_preds.extend(preds)
+            all_labels.extend(labels.cpu().numpy())
+            all_subjects.extend(task_ids.cpu().numpy())
+    return all_subjects, all_labels, all_preds
 
 
 @hydra.main(version_base="1.1", config_path="./conf", config_name="config")
@@ -82,6 +98,8 @@ def main(cfg: DictConfig) -> None:
         check_cuda_availability(cfg.verbose)
         
         fold_metrics = []
+        
+        return
         
         for window_size in cfg.data.window_sizes:
             for stride in cfg.data.strides:
@@ -108,6 +126,16 @@ def main(cfg: DictConfig) -> None:
                     
                     data_module.setup()
                     
+                    # Print subjects in train and test sets
+                    train_subjects = data_module.train_dataset.data.index.get_level_values(0).unique()
+                    test_subjects = data_module.test_dataset.data.index.get_level_values(0).unique()
+                    
+                    rprint(f"\n[bold blue]Subjects in Train Set for Fold {fold + 1}:[/bold blue]")
+                    rprint(train_subjects)
+                    
+                    rprint(f"\n[bold blue]Subjects in Test Set for Fold {fold + 1}:[/bold blue]")
+                    rprint(test_subjects)
+                    
                     print_feature_info(data_module) if cfg.verbose else None
                     print_dataset_info(data_module) if cfg.verbose else None
                     
@@ -117,7 +145,6 @@ def main(cfg: DictConfig) -> None:
                             hidden_size=cfg.model.lstm_specific.hidden_size,
                             num_layers=cfg.model.lstm_specific.num_layers,
                             dropout=cfg.model.lstm_specific.dropout,
-                            proj_size=cfg.model.lstm_specific.proj_size,
                             layer_norm=cfg.model.lstm_specific.layer_norm,
                             verbose=cfg.verbose
                         )
@@ -140,6 +167,18 @@ def main(cfg: DictConfig) -> None:
                     
                     trainer.fit(model, data_module)
                     
+                    # Get predictions for train and test sets
+                    train_subjects, train_labels, train_preds = get_predictions(trainer, model, data_module.train_dataloader())
+                    test_subjects, test_labels, test_preds = get_predictions(trainer, model, data_module.test_dataloader())
+                    
+                    # rprint(f"\n[bold blue]Train Predictions for Fold {fold + 1}:[/bold blue]")
+                    # for subject, label, pred in zip(train_subjects, train_labels, train_preds):
+                    #     rprint(f"Subject: {subject}, True Label: {label}, Predicted Label: {pred}")
+                    
+                    # rprint(f"\n[bold blue]Test Predictions for Fold {fold + 1}:[/bold blue]")
+                    # for subject, label, pred in zip(test_subjects, test_labels, test_preds):
+                    #     rprint(f"Subject: {subject}, True Label: {label}, Predicted Label: {pred}")
+                    
                     fold_metrics.append({
                         'window_size': window_size,
                         'stride': stride,
@@ -157,7 +196,7 @@ def main(cfg: DictConfig) -> None:
                         rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
                         rprint(f"Validation MCC: {trainer.callback_metrics['val_mcc']:.4f}")
                     
-                    if cfg.test_mode:
+                    if cfg.test_mode and fold == 0:
                         break
         
         metrics_df = pd.DataFrame(fold_metrics)

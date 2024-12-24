@@ -25,7 +25,7 @@ class TrainingVisualizer(Callback):
         self.train_losses.append(train_loss)
         self.train_accs.append(train_acc)
         
-        self._update_plot()
+        # self._update_plot()
         # self._print_metrics("Training", train_loss, train_acc)
 
     def on_validation_epoch_end(self, trainer, pl_module):
@@ -40,7 +40,7 @@ class TrainingVisualizer(Callback):
         self.epochs.append(self.current_epoch)
         self.current_epoch += 1
         
-        self._update_plot()
+        # self._update_plot()
         # self._print_metrics("Validation", val_loss, val_acc, val_f1, val_mcc)
         
     def _print_metrics(self, phase, loss, acc, f1=None, mcc=None):

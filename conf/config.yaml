@@ -1,5 +1,14 @@
-defaults:
-  - _self_
+# defaults:
+#   - _self_
+
+# hydra:
+#   job:
+#     chdir: false
+
+defaults:  
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
 
 hydra:
   job:
@@ -14,8 +23,8 @@ device: "cuda"
 
 data:
   data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
-  window_sizes: [25, 50]  
-  strides: [10, 20, 30] 
+  window_sizes: [25]  
+  strides: [10] 
   batch_size: 64
   num_workers: 4
   val_split: 0.2
@@ -30,7 +39,7 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 50
+  max_epochs: 10
   learning_rate: 0.00001
   weight_decay: 0.001
   early_stopping_patience: 10
@@ -47,7 +56,6 @@ model:
     hidden_size: 256  
     num_layers: 3    
     dropout: 0.3      
-    proj_size: 64     
     layer_norm: true
   rnn_specific:
     hidden_size: 128

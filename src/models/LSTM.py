@@ -46,9 +46,9 @@ class LSTMDebugger:
         return True
 
 class LSTM(BaseModel):
-    def __init__(self, input_size=13, hidden_size=256, num_layers=3, dropout=0.2, proj_size=64, layer_norm=True, verbose=False):
+    def __init__(self, input_size=13, hidden_size=256, num_layers=3, dropout=0.2, layer_norm=True, verbose=False):
         super().__init__()
-        self.save_hyperparameters()
+        # self.save_hyperparameters()
         
         self.layer_norm = nn.LayerNorm(input_size, eps=1e-5) if layer_norm else nn.Identity()
         self.input_norm = nn.BatchNorm1d(input_size, eps=1e-5, momentum=0.1)
@@ -61,7 +61,6 @@ class LSTM(BaseModel):
             rprint(f"Hidden Size: {hidden_size}")
             rprint(f"Number of Layers: {num_layers}")
             rprint(f"Dropout: {dropout}")
-            rprint(f"Projection Size: {proj_size}")
             rprint(f"Layer Norm: {layer_norm}")
             rprint(f"[bold blue]========================[/bold blue]")
         
@@ -71,11 +70,10 @@ class LSTM(BaseModel):
             num_layers=num_layers,
             batch_first=True,
             dropout=dropout,
-            bidirectional=True,
-            proj_size=proj_size if proj_size > 0 else None
+            bidirectional=True
         )
         
-        lstm_output_size = proj_size * 2 if proj_size > 0 else hidden_size * 2
+        lstm_output_size = hidden_size * 2
         self.classifier = nn.Linear(lstm_output_size, 1)
         self._init_weights()
 
