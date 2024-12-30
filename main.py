@@ -1,10 +1,10 @@
 from datetime import datetime
 from io import StringIO
 import sys
-from typing import Dict
-import pandas as pd
 
 sys.dont_write_bytecode = True
+from typing import Dict
+import pandas as pd
 import hydra
 from omegaconf import DictConfig
 import pytorch_lightning as pl
@@ -17,6 +17,7 @@ import numpy as np
 from pytorch_lightning.loggers import WandbLogger
 from src.data.datamodule import HandwritingDataModule
 from src.models.RNN import RNN
+from src.models import GRU
 from src.models.LSTM import LSTM
 from src.utils.trainer_visualizer import TrainingVisualizer
 from s3_operations.s3_handler import config
@@ -171,6 +172,17 @@ def main(cfg: DictConfig) -> None:
                             num_layers=cfg.model.num_layers,
                             dropout=cfg.model.dropout,
                             layer_norm=cfg.model.lstm_specific.layer_norm,
+                            verbose=cfg.verbose
+                        )
+                    elif cfg.model.type.lower() == "gru":
+                        model = GRU(
+                            input_size=data_module.get_feature_dim(),
+                            hidden_size=cfg.model.hidden_size,
+                            num_layers=cfg.model.num_layers,
+                            dropout=cfg.model.dropout,
+                            batch_first=cfg.model.gru_specific.batch_first,
+                            bidirectional=cfg.model.bidirectional,
+                            bias=cfg.model.gru_specific.bias,
                             verbose=cfg.verbose
                         )
                     else:

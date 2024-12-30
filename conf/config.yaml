@@ -51,15 +51,18 @@ training:
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "lstm"  # Options: "rnn" or "lstm"
+  type: "gru"  # Options: "rnn" or "lstm" or "gru"
   hidden_size: 256 # 128
-  num_layers: 2
+  num_layers: 2 # 2
   dropout: 0.3 #0.2
   bidirectional: true
   lstm_specific:
     layer_norm: true
   rnn_specific:
     nonlinearity: "relu"
+  gru_specific:
+    batch_first: true
+    bias: true
   
 gpu_settings:
   gpu_id: 0  # Specify which GPU to use

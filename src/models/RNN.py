@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchmetrics import Accuracy, MatthewsCorrCoef, Precision, Recall, F1Score
+# from torchmetrics import Accuracy, MatthewsCorrCoef, Precision, Recall, F1Score
 from rich import print as rprint
 
 from src.models.base import BaseModel
