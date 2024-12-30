@@ -46,17 +46,18 @@ class RNNDebugger:
         return True
 
 class RNN(BaseModel):
-    def __init__(self, input_size=13, hidden_size=128, num_layers=2, verbose=False):
+    def __init__(self, input_size=13, hidden_size=128, num_layers=2, nonlinearity="tanh", dropout=0.1, verbose=False):
         super().__init__()
-        self.save_hyperparameters()
+        # self.save_hyperparameters()
         
         self.input_norm = nn.BatchNorm1d(input_size, eps=1e-5, momentum=0.1)
         self.rnn = nn.RNN(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
+            nonlinearity='relu',
             batch_first=True,
-            dropout=0.1,
+            dropout=dropout,
             bidirectional=True
         )
         
@@ -79,3 +80,11 @@ class RNN(BaseModel):
         outputs = F.relu(outputs)
         outputs = F.dropout(outputs, p=0.1, training=self.training)
         return self.classifier(outputs[:, -1, :])
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.model_config['learning_rate'],
+            weight_decay=self.model_config['weight_decay']
+        )
+        return optimizer

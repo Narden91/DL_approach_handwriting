@@ -30,3 +30,7 @@ ipython>=8.0.0
 # Documentation
 mkdocs>=1.4.0
 mkdocstrings>=0.20.0
+rich~=13.7.1
+setuptools~=69.0.2
+python-dotenv~=1.0.1
+boto3~=1.34.113

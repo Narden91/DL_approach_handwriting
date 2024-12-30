@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
+import boto3
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
@@ -7,6 +8,9 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler, RobustScaler
 import torch
 from torch.utils.data import Dataset, DataLoader
 from rich import print as rprint
+
+from s3_operations.s3_io import S3IOHandler
+# from s3_operations.s3_handler import config
 
 
 class HandwritingDataset(Dataset):
@@ -29,6 +33,8 @@ class HandwritingDataset(Dataset):
         self.feature_cols = feature_cols
         self.column_names = column_names
         self.train = train
+        
+        rprint(f"Creating dataset:\n {self.data}") if verbose else None
         
         # Separate features and labels
         self.features_df = self.data[feature_cols]
@@ -136,17 +142,19 @@ class CustomLabelEncoder:
         self.fit(y)
         return self.transform(y)
     
-    
+
 class HandwritingDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        data_dir: str,
+        s3_handler: S3IOHandler,
+        file_key: str,
         batch_size: int,
         window_size: int,
         stride: int,
         num_workers: int,
         num_tasks: int,
-        file_pattern: str,
+        val_size: float,
+        test_size: float,
         column_names: Dict[str, str],
         fold: int = 0,
         n_folds: int = 5,
@@ -155,15 +163,16 @@ class HandwritingDataModule(pl.LightningDataModule):
         verbose: bool = True
     ):
         super().__init__()
-        self.save_hyperparameters()
         
-        self.data_dir = Path(data_dir)
+        self.s3_handler = s3_handler
+        self.file_key = file_key
         self.batch_size = batch_size
         self.window_size = window_size
         self.stride = stride
         self.num_workers = num_workers
         self.num_tasks = num_tasks
-        self.file_pattern = file_pattern
+        self.val_size = val_size
+        self.test_size = test_size
         self.column_names = column_names
         self.fold = fold
         self.n_folds = n_folds
@@ -179,14 +188,20 @@ class HandwritingDataModule(pl.LightningDataModule):
             'label': CustomLabelEncoder()
         }
         
-        rprint(f"[blue]Initialized DataModule for fold {fold + 1}/{n_folds}[/blue]") if self.verbose else None
-
-    def _preprocess_categorical(self, df: pd.DataFrame) -> pd.DataFrame:
+        if self.verbose:
+            rprint(f"[blue]Initialized DataModule for fold {fold + 1}/{n_folds}[/blue]")
+            
+    def _load_aggregated_data(self) -> pd.DataFrame:
+        """Load aggregated data using S3IOHandler."""
+        rprint(f"[blue]Fetching aggregated data from S3: {self.file_key} in Bucket: {self.s3_handler.bucket_name}[/blue]") if self.verbose else None
+        return self.s3_handler.load_data(self.file_key)
+    
+    def _preprocess_categorical(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Preprocess categorical columns by removing whitespace and encoding.
         After encoding, removes original categorical columns.
         """
-        df = df.copy()
+        df = data.copy()
         
         # Strip whitespace from all string columns
         for col in df.select_dtypes(include=['object']):
@@ -217,54 +232,23 @@ class HandwritingDataModule(pl.LightningDataModule):
             df = df.drop(columns=columns_to_drop)
         
         return df
-    
-    def _get_aggregated_data_path(self) -> Path:
-        """Get the path for the aggregated raw data CSV file."""
-        return Path(self.data_dir) / "aggregated_data.csv"
-
-    def _load_or_aggregate_data(self) -> pd.DataFrame:
-        """Load aggregated data if exists, otherwise aggregate from raw files."""
-        aggregated_path = self._get_aggregated_data_path()
-
-        # Check if aggregated data exists
-        if aggregated_path.exists():
-            rprint("[green]Loading existing aggregated data...[/green]") if self.verbose else None
-            return pd.read_csv(aggregated_path)
-        
-        rprint("[yellow]Aggregating data from raw files...[/yellow]") if self.verbose else None
-        # Load and aggregate all CSV files
-        dfs = []
-        for i in range(1, self.num_tasks + 1):
-            file_path = self.data_dir / self.file_pattern.format(i)
-            rprint(f"[blue]Loading {file_path}[/blue]") if self.verbose else None
-            df = pd.read_csv(file_path)
-            
-            if self.column_names['task'] not in df.columns:
-                df[self.column_names['task']] = i
-            dfs.append(df)
-        
-        # Concatenate all dataframes
-        data = pd.concat(dfs, ignore_index=True)
-        
-        # Save aggregated data
-        data.to_csv(aggregated_path, index=False)
-        rprint(f"[green]Saved aggregated data to {aggregated_path}[/green]") if self.verbose else None
-        
-        return data
 
     def setup(self, stage: Optional[str] = None):
-        """Load and preprocess the data."""
+        """Load and preprocess the data with correct subject distribution."""
         rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]") if self.verbose else None
         
-        # Load or aggregate data
-        data = self._load_or_aggregate_data()
+        # Load and preprocess data
+        data = self._load_aggregated_data()
         data = self._preprocess_categorical(data)
         
-        # Update column names and set features
+        rprint(f"[blue]Data loaded and preprocessed successfully:[/blue]\n{data}") if self.verbose else None
+        
+        # Update column names for encoded labels
         if 'Label' in self.column_names.values():
             self.column_names = {k: v + '_encoded' if v == 'Label' else v 
                             for k, v in self.column_names.items()}
         
+        # Define metadata columns
         metadata_cols = [
             self.column_names['id'],
             self.column_names['segment'],
@@ -272,31 +256,33 @@ class HandwritingDataModule(pl.LightningDataModule):
             self.column_names['label']
         ]
         
+        # Set feature columns
         self.feature_cols = [col for col in data.columns 
-                        if col not in metadata_cols and 
-                        col not in ['Id', 'Segment'] and
-                        not col.endswith('_label')]
+                            if col not in metadata_cols 
+                            and col not in ['Id', 'Segment']
+                            and not col.endswith('_label')]
         
         # Set multi-index
         data = data.set_index([self.column_names['id'], self.column_names['segment']])
         
-        # Create folds
+        # Get unique subjects and verify count
         unique_subjects = data.index.get_level_values(0).unique()
+        total_subjects = len(unique_subjects)
+        assert total_subjects == 174, f"Expected 174 subjects, got {total_subjects}"
+        
+        # Calculate split sizes (70/15/15)
+        test_size = int(self.test_size * total_subjects) 
+        val_size = int(self.val_size * total_subjects)  
+        train_size = total_subjects - (test_size + val_size)
+        
+        # Create splits
         np.random.seed(self.seed)
-        unique_subjects = np.random.permutation(unique_subjects)
+        shuffled_subjects = np.random.permutation(unique_subjects)
         
-        # Split into folds
-        fold_size = len(unique_subjects) // self.n_folds
-        test_size = fold_size  # One fold size for test set
-        
-        if stage == 'fit' or stage is None:
-            val_subjects = unique_subjects[self.fold * fold_size:(self.fold + 1) * fold_size]
-            train_subjects = np.concatenate([
-                unique_subjects[:self.fold * fold_size],
-                unique_subjects[(self.fold + 1) * fold_size:]
-            ])
-            
-            rprint(f"[green]Fold {self.fold + 1} split - Train: {len(train_subjects)} subjects, Val: {len(val_subjects)} subjects[/green]") if self.verbose else None
+        if stage == "fit" or stage is None:
+            # Create train/val split
+            train_subjects = shuffled_subjects[:train_size]
+            val_subjects = shuffled_subjects[train_size:train_size + val_size]
             
             train_data = data[data.index.get_level_values(0).isin(train_subjects)]
             val_data = data[data.index.get_level_values(0).isin(val_subjects)]
@@ -311,7 +297,6 @@ class HandwritingDataModule(pl.LightningDataModule):
                 train=True,
                 verbose=self.verbose
             )
-            self.scaler = self.train_dataset.scaler
             
             self.val_dataset = HandwritingDataset(
                 data=val_data,
@@ -319,16 +304,15 @@ class HandwritingDataModule(pl.LightningDataModule):
                 stride=self.stride,
                 feature_cols=self.feature_cols,
                 column_names=self.column_names,
-                scaler=self.scaler,
+                scaler=self.train_dataset.scaler,
                 scaler_type=self.scaler_type,
                 train=False,
                 verbose=self.verbose
             )
-        
-        if stage == 'test' or stage is None:
-            # For test stage, use the next fold as test set
-            test_fold = (self.fold + 1) % self.n_folds
-            test_subjects = unique_subjects[test_fold * fold_size:(test_fold + 1) * fold_size]
+
+        if stage == "test" or stage is None:
+            # Create test split
+            test_subjects = shuffled_subjects[train_size + val_size:]
             test_data = data[data.index.get_level_values(0).isin(test_subjects)]
             
             self.test_dataset = HandwritingDataset(
@@ -337,12 +321,27 @@ class HandwritingDataModule(pl.LightningDataModule):
                 stride=self.stride,
                 feature_cols=self.feature_cols,
                 column_names=self.column_names,
-                scaler=self.scaler,
+                scaler=self.train_dataset.scaler if hasattr(self, 'train_dataset') else None,
                 scaler_type=self.scaler_type,
                 train=False,
                 verbose=self.verbose
             )
-            rprint(f"[green]Test set created with {len(test_subjects)} subjects[/green]") if self.verbose else None
+        
+        # Verify splits
+        if stage is None:
+            train_ids = set(train_subjects)
+            val_ids = set(val_subjects)
+            test_ids = set(test_subjects)
+            
+            assert len(train_ids & val_ids) == 0, "Overlap found between train and val sets"
+            assert len(train_ids & test_ids) == 0, "Overlap found between train and test sets"
+            assert len(val_ids & test_ids) == 0, "Overlap found between val and test sets"
+            
+            if self.verbose:
+                rprint(f"[green]Dataset split successful:[/green]")
+                rprint(f"Train subjects: {len(train_ids)}")
+                rprint(f"Val subjects: {len(val_ids)}")
+                rprint(f"Test subjects: {len(test_ids)}")
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

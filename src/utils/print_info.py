@@ -162,3 +162,44 @@ def print_feature_info(data_module: HandwritingDataModule):
     rprint("\n[bold blue]Input Feature Details[/bold blue]")
     rprint(feature_table)
     rprint(feature_list_table)
+    
+
+def print_sets_info(data_module: HandwritingDataModule, fold: int):
+    """Print detailed information about dataset splits using rich formatting."""
+    splits_table = Table(
+        title="Dataset Splits",
+        show_header=True,
+        header_style="bold magenta",
+        box=ROUNDED
+    )
+    
+    splits_table.add_column("Split", style="cyan")
+    splits_table.add_column("Size", style="green")
+    splits_table.add_column("Subjects", style="yellow")
+    
+    train_subjects = data_module.train_dataset.data.index.get_level_values(0).unique()
+    val_subjects = data_module.val_dataset.data.index.get_level_values(0).unique()
+    test_subjects = data_module.test_dataset.data.index.get_level_values(0).unique()
+    
+    splits_table.add_row("Training", str(len(data_module.train_dataset)), str(len(train_subjects)))
+    splits_table.add_row("Validation", str(len(data_module.val_dataset)), str(len(val_subjects)))
+    splits_table.add_row("Test", str(len(data_module.test_dataset)), str(len(test_subjects)))
+    
+    rprint("\n[bold blue]Dataset Split Information[/bold blue]")
+    rprint(splits_table)
+    
+
+def print_predictions(subjects, labels, preds, fold, set_type):
+    """Print predictions for a given set (train/test)."""
+    rprint(f"\n[bold blue]{set_type.capitalize()} Predictions for Fold {fold + 1}:[/bold blue]")
+    for subject, label, pred in zip(subjects, labels, preds):
+        rprint(f"Subject: {subject}, True Label: {label}, Predicted Label: {pred}")
+
+
+def print_fold_completion(fold, trainer):
+    """Print fold completion details."""
+    rprint(f"\n[bold cyan]Fold {fold + 1}/5 completed![/bold cyan]")
+    rprint(f"Validation Loss: {trainer.callback_metrics['val_loss']:.4f}")
+    rprint(f"Validation Accuracy: {trainer.callback_metrics['val_acc']:.4f}")
+    rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
+    rprint(f"Validation MCC: {trainer.callback_metrics['val_mcc']:.4f}")
