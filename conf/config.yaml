@@ -51,7 +51,7 @@ training:
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "rnn"  # Options: "rnn" or "lstm"
+  type: "lstm"  # Options: "rnn" or "lstm"
   hidden_size: 256 # 128
   num_layers: 2
   dropout: 0.3 #0.2

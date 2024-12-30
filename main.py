@@ -14,7 +14,7 @@ import os
 from rich import print as rprint
 import random
 import numpy as np
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
 from src.data.datamodule import HandwritingDataModule
 from src.models.RNN import RNN
 from src.models.LSTM import LSTM
@@ -22,6 +22,7 @@ from src.utils.trainer_visualizer import TrainingVisualizer
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
 from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_sets_info, print_predictions, print_fold_completion
+
 
 def set_global_seed(seed: int) -> None:
     """Set seed for reproducibility across all libraries."""
@@ -46,6 +47,14 @@ def configure_training(config):
         process_position=0,
         leave=True
     )
+    
+    # Add Wandb logger
+    wandb_logger = WandbLogger(
+        project="handwriting_analysis",
+        name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
+    )
+    wandb_logger.experiment.config.update(dict(config), allow_val_change=True)
+    
     trainer_config = {
         "accelerator": "gpu",
         "devices": 1,
@@ -65,9 +74,17 @@ def configure_training(config):
         "enable_model_summary": True,
         "strategy": "auto",
         "sync_batchnorm": False,
-        "logger": False,
+        # Use Wandb logger
+        "logger": wandb_logger,
         "enable_checkpointing": False,
         "enable_model_summary": True
+        # "enable_progress_bar": True,
+        # "enable_model_summary": True,
+        # "strategy": "auto",
+        # "sync_batchnorm": False,
+        # "logger": False,
+        # "enable_checkpointing": False,
+        # "enable_model_summary": True
     }
     return trainer_config
 
