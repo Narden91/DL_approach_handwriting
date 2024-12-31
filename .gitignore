@@ -106,3 +106,7 @@ models/*
 plots/*
 .env
 .codegpt
+wandb
+wandb_cache
+k8s_manifest
+.codegpt
