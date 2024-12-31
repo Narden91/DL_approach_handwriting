@@ -10,16 +10,23 @@ This project implements a deep learning approach to analyze handwriting data for
 
 ```
 ├── conf/
-│   └── config.yaml           # Hydra configuration file
+│   └── config.yaml                        # Hydra configuration file
+├── s3_operations/
+│   ├── s3_handler.py                      # S3 initialization
+│   └── s3_io.py                           # S3 IO operations handling
 ├── src/
 │   ├── data/
-│   │   └── datamodule.py     # Data loading and preprocessing
+│   │   └── datamodule.py                  # Data loading and preprocessing
 │   ├── models/
-│   │   ├── base.py           # Base model class
-│   │   └── RNN.py            # RNN model implementation
+│   │   ├── base.py                        # Base model class
+│   │   ├── RNN.py                         # RNN model
+│   │   └── GRU.py                         # GRU model
+│   │   └── LSTM.py                        # LSTM model 
 │   └── utils/
-│       └── print_info.py     # Utility functions for information display
-├── main.py                   # Main training script
+│       ├── trainer_visualizer.py          # Plot Functions
+│       ├── majority_vote.py               # Implement Majority Vote Strategy
+│       └── print_info.py                  # Utility functions for information display
+├── main.py                                # Main training script
 ```
 
 ## Key Components
@@ -74,6 +81,12 @@ This project implements a deep learning approach to analyze handwriting data for
 
 The project uses Hydra for configuration management. Key configurations in `config.yaml`
 
+## Models Implemented
+- Convolutional Neural Networks (CNN)
+- Recurrent Neural Networks (RNN)
+- Long Short-Term Memory Networks (LSTM)
+- Gated Recurrent Units (GRU)
+
 ## Metrics
 
 The model tracks multiple performance metrics:
@@ -93,6 +106,8 @@ python main.py
 
 ## License
 
+This project is licensed under the Università degli Studi di Cassino license.
 
 ## Contributors
 
+@Narden91
