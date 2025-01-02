@@ -1,102 +1,46 @@
 import os
-from typing import List, Dict, Any
+from typing import Any, Dict
 from omegaconf import DictConfig, OmegaConf
 from rich import print as rprint
 from rich.panel import Panel
 
+
 class ConfigOperations:
     @staticmethod
-    def parse_list_param(param_str: str) -> List[int]:
-        """Parse comma-separated string into list of integers."""
-        try:
-            return [int(x.strip()) for x in param_str.split(',')]
-        except ValueError:
-            raise ValueError("Parameters must be comma-separated integers")
-    
-    @staticmethod
-    def parse_bool(value: str) -> bool:
-        """Parse string to boolean."""
-        return value.lower() in ('true', '1', 'yes', 'on')
-
-    @staticmethod
     def get_env_config() -> Dict[str, Any]:
-        """Get configuration from environment variables."""
-        env_config = {}
-        
-        # Training parameters
-        if max_epochs := os.getenv('MAX_EPOCHS'):
-            try:
-                env_config['training.max_epochs'] = int(max_epochs)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid MAX_EPOCHS format[/yellow]")
+        """Retrieve configuration from environment variables."""
+        def convert_value(key: str, value: str) -> Any:
+            if value is None:
+                return None
+            if key in ["SEED", "NUM_FOLDS", "BATCH_SIZE", "MAX_EPOCHS", "EARLY_STOPPING_PATIENCE"]:
+                return int(value)
+            elif key in ["LEARNING_RATE", "WEIGHT_DECAY", "GRADIENT_CLIP_VAL"]:
+                return float(value)
+            elif key in ["VERBOSE", "TEST_MODE"]:
+                return value.lower() == "true"
+            elif key in ["WINDOW_SIZES", "STRIDES"]:
+                return [int(x) for x in value.split(',')]
+            else:
+                return value
 
-        if learning_rate := os.getenv('LEARNING_RATE'):
-            try:
-                env_config['training.learning_rate'] = float(learning_rate)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid LEARNING_RATE format[/yellow]")
-
-        if weight_decay := os.getenv('WEIGHT_DECAY'):
-            try:
-                env_config['training.weight_decay'] = float(weight_decay)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid WEIGHT_DECAY format[/yellow]")
-
-        if early_stopping_patience := os.getenv('EARLY_STOPPING_PATIENCE'):
-            try:
-                env_config['training.early_stopping_patience'] = int(early_stopping_patience)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid EARLY_STOPPING_PATIENCE format[/yellow]")
-
-        if gradient_clip_val := os.getenv('GRADIENT_CLIP_VAL'):
-            try:
-                env_config['training.gradient_clip_val'] = float(gradient_clip_val)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid GRADIENT_CLIP_VAL format[/yellow]")
-        
-        # Model parameter
-        if model_name := os.getenv('MODEL_TYPE'):
-            try:
-                env_config['model_type'] = model_name
-            except ValueError:
-                rprint("[yellow]Warning: Invalid MODEL_TYPE format[/yellow]")
-        
-        # Data parameters
-        if window_sizes_str := os.getenv('WINDOW_SIZES'):
-            try:
-                env_config['data.window_sizes'] = ConfigOperations.parse_list_param(window_sizes_str)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid WINDOW_SIZES format[/yellow]")
-
-        if strides_str := os.getenv('STRIDES'):
-            try:
-                env_config['data.strides'] = ConfigOperations.parse_list_param(strides_str)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid STRIDES format[/yellow]")
-
-        # General parameters
-        if seed := os.getenv('SEED'):
-            try:
-                env_config['seed'] = int(seed)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid SEED format[/yellow]")
-
-        if verbose := os.getenv('VERBOSE'):
-            env_config['verbose'] = ConfigOperations.parse_bool(verbose)
-
-        if num_folds := os.getenv('NUM_FOLDS'):
-            try:
-                env_config['num_folds'] = int(num_folds)
-            except ValueError:
-                rprint("[yellow]Warning: Invalid NUM_FOLDS format[/yellow]")
-
-        if test_mode := os.getenv('TEST_MODE'):
-            env_config['test_mode'] = ConfigOperations.parse_bool(test_mode)
-
-        if exp_name := os.getenv('EXPERIMENT_NAME'):
-            env_config['experiment_name'] = exp_name
-
-        return env_config
+        env_vars = {
+            "seed": convert_value("SEED", os.getenv("SEED")),
+            "verbose": convert_value("VERBOSE", os.getenv("VERBOSE")),
+            "num_folds": convert_value("NUM_FOLDS", os.getenv("NUM_FOLDS")),
+            "test_mode": convert_value("TEST_MODE", os.getenv("TEST_MODE")),
+            "experiment_name": os.getenv("EXPERIMENT_NAME"),
+            "data.window_sizes": convert_value("WINDOW_SIZES", os.getenv("WINDOW_SIZES")),
+            "data.strides": convert_value("STRIDES", os.getenv("STRIDES")),
+            "data.batch_size": convert_value("BATCH_SIZE", os.getenv("BATCH_SIZE")),
+            "model.type": os.getenv("MODEL_TYPE"),
+            "training.max_epochs": convert_value("MAX_EPOCHS", os.getenv("MAX_EPOCHS")),
+            "training.learning_rate": convert_value("LEARNING_RATE", os.getenv("LEARNING_RATE")),
+            "training.weight_decay": convert_value("WEIGHT_DECAY", os.getenv("WEIGHT_DECAY")),
+            "training.early_stopping_patience": convert_value("EARLY_STOPPING_PATIENCE", os.getenv("EARLY_STOPPING_PATIENCE")),
+            "training.gradient_clip_val": convert_value("GRADIENT_CLIP_VAL", os.getenv("GRADIENT_CLIP_VAL"))
+        }
+        # Remove None values
+        return {k: v for k, v in env_vars.items() if v is not None}
 
     @staticmethod
     def merge_configurations(hydra_cfg: DictConfig) -> DictConfig:
@@ -105,41 +49,48 @@ class ConfigOperations:
         env_config = ConfigOperations.get_env_config()
         
         # Create mutable configuration
-        config = OmegaConf.to_container(hydra_cfg, resolve=True)
+        config = OmegaConf.create(OmegaConf.to_container(hydra_cfg, resolve=True))
         
         # Update with environment variables
-        for key, value in env_config.items():
-            OmegaConf.update(config, key, value, merge=True)
-        
-        # Convert back to OmegaConf
-        merged_config = OmegaConf.create(config)
+        for key_path, value in env_config.items():
+            parts = key_path.split('.')
+            current = config
+            for part in parts[:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+            current[parts[-1]] = value
         
         # Display final configuration
-        ConfigOperations.display_configuration(merged_config)
+        ConfigOperations.display_configuration(config, env_config.keys())
         
-        return merged_config
+        return config
 
     @staticmethod
-    def display_configuration(config: DictConfig) -> None:
-        """Display the final configuration."""
+    def display_configuration(config: DictConfig, env_overrides: set) -> None:
+        """Display the final configuration with highlighting for overridden values."""
+        def format_value(path: str, value: Any) -> str:
+            source = "env" if path in env_overrides else "default"
+            return f"{value} [dim]({source})[/]"
+
         rprint(Panel(
             f"[bold green]Training Configuration[/]\n\n"
             f"[yellow]General Settings:[/]\n"
-            f"  Experiment: {config.experiment_name}\n"
-            f"  Seed: {config.seed}\n"
-            f"  Verbose: {config.verbose}\n"
-            f"  Num Folds: {config.num_folds}\n"
-            f"  Test Mode: {config.test_mode}\n\n"
+            f"  Experiment: {format_value('experiment_name', config.experiment_name)}\n"
+            f"  Seed: {format_value('seed', config.seed)}\n"
+            f"  Verbose: {format_value('verbose', config.verbose)}\n"
+            f"  Num Folds: {format_value('num_folds', config.num_folds)}\n"
+            f"  Test Mode: {format_value('test_mode', config.test_mode)}\n\n"
             f"[yellow]Data Settings:[/]\n"
-            f"  Window sizes: {config.data.window_sizes}\n"
-            f"  Strides: {config.data.strides}\n"
-            f"  Batch size: {config.data.batch_size}\n\n"
+            f"  Window sizes: {format_value('data.window_sizes', config.data.window_sizes)}\n"
+            f"  Strides: {format_value('data.strides', config.data.strides)}\n"
+            f"  Batch size: {format_value('data.batch_size', config.data.batch_size)}\n\n"
             f"[yellow]Training Settings:[/]\n"
-            f"  Max Epochs: {config.training.max_epochs}\n"
-            f"  Learning Rate: {config.training.learning_rate}\n"
-            f"  Weight Decay: {config.training.weight_decay}\n"
-            f"  Early Stopping Patience: {config.training.early_stopping_patience}\n"
-            f"  Gradient Clip Value: {config.training.gradient_clip_val}",
+            f"  Max Epochs: {format_value('training.max_epochs', config.training.max_epochs)}\n"
+            f"  Learning Rate: {format_value('training.learning_rate', config.training.learning_rate)}\n"
+            f"  Weight Decay: {format_value('training.weight_decay', config.training.weight_decay)}\n"
+            f"  Early Stopping Patience: {format_value('training.early_stopping_patience', config.training.early_stopping_patience)}\n"
+            f"  Gradient Clip Value: {format_value('training.gradient_clip_val', config.training.gradient_clip_val)}",
             title="Configuration",
             style="blue"
         ))

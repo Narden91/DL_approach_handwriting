@@ -116,14 +116,14 @@ def get_predictions(trainer, model, dataloader):
             all_labels.extend(labels.cpu().numpy())
             all_subjects.extend(task_ids.cpu().numpy())
     return all_subjects, all_labels, all_preds
-
+            
 
 @hydra.main(version_base="1.1", config_path="./conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     """Main training function."""
     try:
         cfg = ConfigOperations.merge_configurations(cfg)
-                
+                        
         set_global_seed(cfg.seed)
         rprint("[bold blue]Starting Handwriting Analysis with 5-Fold Cross Validation[/bold blue]")
         check_cuda_availability(cfg.verbose)
@@ -142,7 +142,7 @@ def main(cfg: DictConfig) -> None:
 
                 for fold in range(cfg.num_folds):
                     rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
-                    
+                                        
                     fold_seed = cfg.seed + fold
                     
                     data_module = HandwritingDataModule(
@@ -252,7 +252,7 @@ def main(cfg: DictConfig) -> None:
                         
                     if cfg.test_mode and fold == 0:
                         break
-
+        
         metrics_df = pd.DataFrame(fold_metrics)
         rprint("\n[bold blue]Cross Validation Results:[/bold blue]")
         rprint(metrics_df.to_string())
