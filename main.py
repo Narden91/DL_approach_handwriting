@@ -1,9 +1,7 @@
 from datetime import datetime
-from io import StringIO
 import sys
 
 sys.dont_write_bytecode = True
-from typing import Dict
 import pandas as pd
 import hydra
 from omegaconf import DictConfig
@@ -17,11 +15,13 @@ import numpy as np
 from pytorch_lightning.loggers import WandbLogger
 from src.data.datamodule import HandwritingDataModule
 from src.models.RNN import RNN
-from src.models import GRU
+from src.models.GRU import GRU 
+from src.models.XLSTM import XLSTM
 from src.models.LSTM import LSTM
 from src.utils.trainer_visualizer import TrainingVisualizer
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
+from src.utils.config_operations import ConfigOperations
 from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_sets_info, print_predictions, print_fold_completion
 
 
@@ -122,6 +122,8 @@ def get_predictions(trainer, model, dataloader):
 def main(cfg: DictConfig) -> None:
     """Main training function."""
     try:
+        cfg = ConfigOperations.merge_configurations(cfg)
+                
         set_global_seed(cfg.seed)
         rprint("[bold blue]Starting Handwriting Analysis with 5-Fold Cross Validation[/bold blue]")
         check_cuda_availability(cfg.verbose)
@@ -130,7 +132,7 @@ def main(cfg: DictConfig) -> None:
         output_filename: str = f"{cfg.data.output_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         file_key_save: str = f"{cfg.data.s3_folder_output}/{output_filename}"
         s3_handler: S3IOHandler = S3IOHandler(config, verbose=cfg.verbose)
-
+        
         # Metrics for each fold
         fold_metrics = []
         
@@ -140,6 +142,8 @@ def main(cfg: DictConfig) -> None:
 
                 for fold in range(cfg.num_folds):
                     rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
+                    
+                    fold_seed = cfg.seed + fold
                     
                     data_module = HandwritingDataModule(
                         s3_handler=s3_handler,
@@ -155,7 +159,7 @@ def main(cfg: DictConfig) -> None:
                         fold=fold,
                         n_folds=cfg.num_folds,
                         scaler_type=cfg.data.scaler,
-                        seed=cfg.seed,
+                        seed=fold_seed,
                         verbose=cfg.verbose
                     )
 
@@ -172,6 +176,16 @@ def main(cfg: DictConfig) -> None:
                             num_layers=cfg.model.num_layers,
                             dropout=cfg.model.dropout,
                             layer_norm=cfg.model.lstm_specific.layer_norm,
+                            verbose=cfg.verbose
+                        )
+                    elif cfg.model.type.lower() == "xlstm":
+                        model = XLSTM(
+                            input_size=data_module.get_feature_dim(),
+                            hidden_size=cfg.model.hidden_size,
+                            num_layers=cfg.model.num_layers,
+                            dropout=cfg.model.dropout,
+                            layer_norm=cfg.model.lstm_specific.layer_norm,
+                            recurrent_dropout=cfg.model.xlstm_specific.recurrent_dropout,
                             verbose=cfg.verbose
                         )
                     elif cfg.model.type.lower() == "gru":

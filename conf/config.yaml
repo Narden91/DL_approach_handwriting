@@ -17,7 +17,7 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: true
+test_mode: false
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
@@ -43,15 +43,15 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 2
-  learning_rate: 0.001
+  max_epochs: 100
+  learning_rate: 0.0005
   weight_decay: 0.0001
   early_stopping_patience: 10
-  gradient_clip_val: 1
+  gradient_clip_val: 0.5
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "gru"  # Options: "rnn" or "lstm" or "gru"
+  type: "xlstm"  # Options: "rnn" or "lstm" or "gru" or "xlstm"
   hidden_size: 256 # 128
   num_layers: 2 # 2
   dropout: 0.3 #0.2
@@ -63,6 +63,8 @@ model:
   gru_specific:
     batch_first: true
     bias: true
+  xlstm_specific:
+    recurrent_dropout: 0.1
   
 gpu_settings:
   gpu_id: 0  # Specify which GPU to use
