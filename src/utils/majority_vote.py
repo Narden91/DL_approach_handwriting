@@ -1,4 +1,5 @@
 import pandas as pd
+import torch
 from collections import Counter
 
 
@@ -25,3 +26,31 @@ def majority_vote(predictions_df: pd.DataFrame, subject_col: str, prediction_col
         })
     
     return pd.DataFrame(majority_votes)
+
+
+def get_predictions(trainer, model, dataloader):
+    """Get predictions for a given dataloader using the trained model.
+    
+    Args:
+    - trainer: PyTorch Lightning Trainer object
+    - model: PyTorch Lightning Module object
+    - dataloader: PyTorch DataLoader object
+    
+    Returns:
+    - List of subjects
+    - List of true labels
+    - List of predicted labels
+    """
+    model.eval()
+    all_preds = []
+    all_labels = []
+    all_subjects = []
+    with torch.no_grad():
+        for batch in dataloader:
+            features, labels, task_ids, masks = batch
+            logits = model(features, task_ids, masks)
+            preds = torch.sigmoid(logits).round().cpu().numpy()
+            all_preds.extend(preds)
+            all_labels.extend(labels.cpu().numpy())
+            all_subjects.extend(task_ids.cpu().numpy())
+    return all_subjects, all_labels, all_preds
