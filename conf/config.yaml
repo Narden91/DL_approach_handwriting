@@ -44,7 +44,7 @@ training:
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "lstm"  # Options: "rnn" or "lstm" or "gru" or "xlstm" "simpleRNN"
+  type: "attention_rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32
@@ -62,6 +62,8 @@ model:
     bias: true
   xlstm_specific:
     recurrent_dropout: 0.1
+  attention_specific:
+    n_heads: 4
   
 gpu_settings:
   gpu_id: 0  # Specify which GPU to use

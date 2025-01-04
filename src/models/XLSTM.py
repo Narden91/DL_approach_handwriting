@@ -1,111 +1,196 @@
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchmetrics import Accuracy, MatthewsCorrCoef, Precision, Recall, F1Score
 from rich import print as rprint
 
 from src.models.base import BaseModel
-
-
-class XLSTMDebugger:
-    @staticmethod
-    def check_tensor(tensor: torch.Tensor, name: str, step: str):
-        if tensor is None:
-            rprint(f"[red]{step} - {name} is None[/red]")
-            return False
-        
-        is_nan = torch.isnan(tensor).any()
-        is_inf = torch.isinf(tensor).any()
-        
-        if is_nan or is_inf:
-            rprint(f"[red]{step} - {name} contains NaN: {is_nan}, Inf: {is_inf}[/red]")
-            return False
-            
-        stats = {
-            'min': float(tensor.min()),
-            'max': float(tensor.max()),
-            'mean': float(tensor.mean()),
-            'std': float(tensor.std())
-        }
-        
-        rprint(f"[green]{step} - {name} stats: {stats}[/green]")
-        return True
-
-    @staticmethod
-    def check_gradients(model: nn.Module, step: str):
-        for name, param in model.named_parameters():
-            if param.grad is not None:
-                grad_norm = param.grad.norm()
-                param_norm = param.norm()
-                
-                if torch.isnan(grad_norm) or torch.isinf(grad_norm):
-                    rprint(f"[red]{step} - Gradient NaN/Inf detected in {name}[/red]")
-                    return False
-                    
-                rprint(f"[blue]{step} - {name} - grad norm: {grad_norm:.4f}, param norm: {param_norm:.4f}[/blue]")
-        return True
+from src.models.RNN import RNNDebugger
 
 class XLSTM(BaseModel):
-    def __init__(self, input_size=13, hidden_size=256, num_layers=3, dropout=0.2, layer_norm=True, recurrent_dropout=0.1, verbose=False):
+    def __init__(
+        self, 
+        input_size=13,
+        hidden_size=128,
+        num_layers=2,
+        num_tasks=34,
+        task_embedding_dim=32,
+        dropout=0.3,
+        embedding_dropout=0.1,
+        layer_norm=True,
+        recurrent_dropout=0.1,
+        verbose=False
+    ):
         super().__init__()
-        # self.save_hyperparameters()
         
-        self.layer_norm = nn.LayerNorm(input_size, eps=1e-5) if layer_norm else nn.Identity()
+        self.save_hyperparameters()
+        self.verbose = verbose
+        self.debugger = RNNDebugger()
+        
+        # Feature normalization layers
+        self.feature_norm = nn.LayerNorm(input_size)
         self.input_norm = nn.BatchNorm1d(input_size, eps=1e-5, momentum=0.1)
-        self.dropout = nn.Dropout(dropout)
-        self.recurrent_dropout = recurrent_dropout
         
-        if verbose:
-            rprint(f"[bold blue]========================[/bold blue]")
-            rprint(f"[bold blue]X-LSTM Model Configuration[/bold blue]")
-            rprint(f"Input Size: {input_size}")
-            rprint(f"Hidden Size: {hidden_size}")
-            rprint(f"Number of Layers: {num_layers}")
-            rprint(f"Dropout: {dropout}")
-            rprint(f"Recurrent Dropout: {recurrent_dropout}")
-            rprint(f"Layer Norm: {layer_norm}")
-            rprint(f"[bold blue]========================[/bold blue]")
+        # Task embedding with dropout
+        self.task_embedding = nn.Embedding(num_tasks + 1, task_embedding_dim)
+        self.embedding_dropout = nn.Dropout(embedding_dropout)
         
+        # Combined input size
+        lstm_input_size = input_size + task_embedding_dim
+        
+        # Main LSTM layer
         self.lstm = nn.LSTM(
-            input_size=input_size,
+            input_size=lstm_input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
-            dropout=dropout,
+            dropout=dropout if num_layers > 1 else 0,
             bidirectional=True
         )
         
-        lstm_output_size = hidden_size * 2
-        self.classifier = nn.Linear(lstm_output_size, 1)
+        # Output size considering bidirectional
+        output_size = hidden_size * 2
+        
+        # Classifier with layer normalization
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(output_size),
+            nn.Dropout(dropout),
+            nn.Linear(output_size, 1)
+        )
+        
         self._init_weights()
+        
+        if verbose:
+            rprint(f"\n[bold blue]XLSTM Model Configuration:[/bold blue]")
+            rprint(f"Input Size: {input_size}")
+            rprint(f"Hidden Size: {hidden_size}")
+            rprint(f"Number of Layers: {num_layers}")
+            rprint(f"Task Embedding Dim: {task_embedding_dim}")
+            rprint(f"Dropout: {dropout}")
+            rprint(f"Embedding Dropout: {embedding_dropout}")
+            rprint(f"Recurrent Dropout: {recurrent_dropout}")
+            rprint(f"Layer Norm: {layer_norm}")
 
     def _init_weights(self):
+        """Initialize weights with appropriate initialization schemes"""
+        # Initialize embedding with smaller values
+        nn.init.uniform_(self.task_embedding.weight, -0.05, 0.05)
+        
+        # Initialize LSTM weights
         for name, param in self.lstm.named_parameters():
-            if 'weight' in name:
-                nn.init.orthogonal_(param)
+            if 'weight_ih' in name:
+                nn.init.xavier_uniform_(param, gain=1.0)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param, gain=1.0)
             elif 'bias' in name:
                 nn.init.zeros_(param)
-                if 'bias_ih' in name:
-                    n = param.size(0)
-                    param.data[n//4:n//2].fill_(1.)
+                # Set forget gate bias to 1
+                n = param.size(0)
+                param.data[n//4:n//2].fill_(1.)
+        
+        # Initialize classifier
+        for name, param in self.classifier.named_parameters():
+            if 'weight' in name:
+                if len(param.shape) >= 2:
+                    nn.init.xavier_uniform_(param, gain=0.1)
+                else:
+                    nn.init.uniform_(param, -0.1, 0.1)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
 
-    def forward(self, x, task_ids, masks):
+    def set_class_weights(self, dataset):
+        """Set class weights from dataset"""
+        if hasattr(dataset, 'class_weights'):
+            self.class_weights = torch.tensor([
+                dataset.class_weights[0],
+                dataset.class_weights[1]
+            ], device=self.device)
+
+    def forward(self, x, task_ids, masks=None):
+        """
+        Forward pass of the model.
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, input_size)
+            task_ids: Task identifiers of shape (batch_size, 1)
+            masks: Optional mask tensor of shape (batch_size, seq_len)
+        """
+        batch_size, seq_len, _ = x.size()
+        
+        # Initial preprocessing
         x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
         x = torch.clamp(x, -10, 10)
-        x = self.input_norm(x.transpose(1,2)).transpose(1,2)
-        x = self.layer_norm(x)
-        x = self.dropout(x)
         
-        outputs, _ = self.lstm(x)
-        outputs = F.relu(outputs)
-        outputs = self.dropout(outputs)
-        return self.classifier(outputs[:, -1, :])
+        if self.verbose:
+            self.debugger.check_tensor(x, "Initial input", "Forward")
+        
+        # Apply normalization
+        x = self.input_norm(x.transpose(1, 2)).transpose(1, 2)
+        x = self.feature_norm(x)
+        
+        # Process task embeddings
+        task_ids = task_ids.squeeze(-1)
+        task_emb = self.task_embedding(task_ids)
+        task_emb = self.embedding_dropout(task_emb)
+        task_emb = task_emb.unsqueeze(1).expand(-1, seq_len, -1)
+        
+        # Combine features with task embeddings
+        x = torch.cat([x, task_emb], dim=-1)
+        
+        if self.verbose:
+            self.debugger.check_tensor(x, "Combined input", "Forward")
+        
+        # Apply masking if provided
+        if masks is not None:
+            x = x * masks.unsqueeze(-1)
+        
+        # LSTM forward pass
+        output, _ = self.lstm(x)
+        
+        if self.verbose:
+            self.debugger.check_tensor(output, "LSTM output", "Forward")
+        
+        # Use final output for classification
+        return self.classifier(output[:, -1, :])
     
     def configure_optimizers(self):
+        """Configure optimizer and learning rate scheduler"""
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.model_config['learning_rate'],
-            weight_decay=self.model_config['weight_decay']
+            weight_decay=self.model_config['weight_decay'],
+            amsgrad=True
         )
-        return optimizer
+        
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='max',
+            factor=0.5,
+            patience=5,
+            min_lr=1e-6,
+            verbose=True
+        )
+        
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_f1",
+                "frequency": 1
+            }
+        }
+    
+    def aggregate_predictions(self, window_preds, subject_ids):
+        """Aggregate window-level predictions to subject-level"""
+        pred_probs = torch.sigmoid(window_preds).cpu().numpy()
+        subject_preds = {}
+        
+        for pred, subj_id in zip(pred_probs, subject_ids):
+            if subj_id not in subject_preds:
+                subject_preds[subj_id] = []
+            subject_preds[subj_id].append(pred)
+        
+        # Average predictions for each subject
+        final_preds = {subj: np.mean(preds) > 0.5 
+                      for subj, preds in subject_preds.items()}
+        return final_preds

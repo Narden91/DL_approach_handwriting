@@ -230,3 +230,43 @@ def print_subject_metrics(train_metrics, test_metrics, fold, verbose=True):
     for metric_name, metric_key in metrics_display:
         if metric_key in test_metrics:
             rprint(f"{metric_name}: {test_metrics[metric_key]:.4f}")
+            
+
+def process_metrics(metrics_df, window_size, stride, cfg):
+    """Process and display metrics with proper handling of single-fold case."""
+    rprint(f"\n[bold blue]Results for window_size={window_size}, stride={stride}:[/bold blue]")
+    
+    # For test mode or single fold, use the raw values without std
+    if cfg.test_mode or cfg.num_folds <= 1:
+        mean_metrics = metrics_df.groupby(['window_size', 'stride']).mean()
+        
+        metric_groups = {
+            'Training Metrics': 'train_subject_',
+            'Testing Metrics': 'test_subject_'
+        }
+        
+        for group_name, prefix in metric_groups.items():
+            rprint(f"\n[bold cyan]{group_name}:[/bold cyan]")
+            for metric in ['acc', 'precision', 'recall', 'specificity', 'f1', 'mcc']:
+                metric_name = f"{prefix}{metric}"
+                if metric_name in mean_metrics:
+                    mean_val = mean_metrics.loc[(window_size, stride), metric_name]
+                    rprint(f"{metric.capitalize()}: {mean_val:.4f}")
+    else:
+        # Calculate mean and std for multiple folds
+        mean_metrics = metrics_df.groupby(['window_size', 'stride']).mean()
+        std_metrics = metrics_df.groupby(['window_size', 'stride']).std()
+        
+        metric_groups = {
+            'Training Metrics': 'train_subject_',
+            'Testing Metrics': 'test_subject_'
+        }
+        
+        for group_name, prefix in metric_groups.items():
+            rprint(f"\n[bold cyan]{group_name}:[/bold cyan]")
+            for metric in ['acc', 'precision', 'recall', 'specificity', 'f1', 'mcc']:
+                metric_name = f"{prefix}{metric}"
+                if metric_name in mean_metrics:
+                    mean_val = mean_metrics.loc[(window_size, stride), metric_name]
+                    std_val = std_metrics.loc[(window_size, stride), metric_name]
+                    rprint(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}")

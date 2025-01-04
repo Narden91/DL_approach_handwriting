@@ -86,6 +86,7 @@ class ConfigOperations:
             f"  Strides: {format_value('data.strides', config.data.strides)}\n"
             f"  Batch size: {format_value('data.batch_size', config.data.batch_size)}\n\n"
             f"[yellow]Training Settings:[/]\n"
+            f"  Model Type: {format_value('model.type', config.model.type)}\n"
             f"  Max Epochs: {format_value('training.max_epochs', config.training.max_epochs)}\n"
             f"  Learning Rate: {format_value('training.learning_rate', config.training.learning_rate)}\n"
             f"  Weight Decay: {format_value('training.weight_decay', config.training.weight_decay)}\n"

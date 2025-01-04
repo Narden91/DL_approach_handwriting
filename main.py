@@ -13,18 +13,13 @@ from rich import print as rprint
 import random
 import numpy as np
 from pytorch_lightning.loggers import WandbLogger
+from src.utils.model_factory import ModelFactory
 from src.data.datamodule import HandwritingDataModule
-from src.models.RNN import RNN
-from src.models.simpleRNN import SimpleRNN
-from src.models.GRU import GRU 
-from src.models.XLSTM import XLSTM
-from src.models.LSTM import LSTM
-from src.utils.trainer_visualizer import TrainingVisualizer
 from src.utils.callbacks import GradientMonitorCallback, ThresholdTuner
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
 from src.utils.config_operations import ConfigOperations
-from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_subject_metrics
+from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_subject_metrics, process_metrics
 from src.utils.majority_vote import get_predictions, compute_subject_metrics
 
 
@@ -59,11 +54,15 @@ def configure_training(config):
     
     threshold_tuner = ThresholdTuner()
     
-    # Initialize Wandb logger
-    wandb_logger = WandbLogger(
-        project="handwriting_analysis",
-        name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
-    )
+    try:
+        # Initialize Wandb logger with error handling
+        wandb_logger = WandbLogger(
+            project="handwriting_analysis",
+            name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
+        )
+    except Exception as e:
+        rprint(f"[yellow]Warning: Could not initialize WandB logger: {str(e)}. Continuing without logging...[/yellow]")
+        wandb_logger = None
     
     trainer_config = {
         "accelerator": "gpu",
@@ -76,7 +75,7 @@ def configure_training(config):
             threshold_tuner,
             GradientMonitorCallback()
         ],
-        "logger": wandb_logger,
+        "logger": wandb_logger if wandb_logger is not None else False,
         "log_every_n_steps": 10,
         "val_check_interval": 0.5,
         "enable_checkpointing": False,
@@ -84,6 +83,17 @@ def configure_training(config):
     }
     
     return trainer_config, wandb_logger
+
+
+def safe_wandb_log(logger, metrics, epoch=None):
+    """Safely log metrics to WandB with error handling."""
+    if logger is not None:
+        try:
+            if epoch is not None:
+                metrics['epoch'] = epoch
+            logger.log_metrics(metrics)
+        except Exception as e:
+            rprint(f"[yellow]Warning: Failed to log metrics to WandB: {str(e)}[/yellow]")
             
 
 @hydra.main(version_base="1.1", config_path="./conf", config_name="config")
@@ -107,170 +117,101 @@ def main(cfg: DictConfig) -> None:
         for window_size in cfg.data.window_sizes:
             for stride in cfg.data.strides:
                 rprint(f"\n[bold cyan]====== Testing window_size={window_size}, stride={stride} ======[/bold cyan]")
-
                 for fold in range(cfg.num_folds):
                     rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
-                                        
-                    fold_seed = cfg.seed + fold
-                    
-                    data_module = HandwritingDataModule(
-                        s3_handler=s3_handler,
-                        file_key=file_key_load,
-                        batch_size=cfg.data.batch_size,
-                        window_size=window_size,
-                        stride=stride,
-                        num_workers=cfg.data.num_workers,
-                        num_tasks=cfg.data.num_tasks,
-                        val_size=cfg.data.val_size,
-                        test_size=cfg.data.test_size,
-                        column_names=dict(cfg.data.columns),
-                        fold=fold,
-                        n_folds=cfg.num_folds,
-                        scaler_type=cfg.data.scaler,
-                        seed=fold_seed,
-                        verbose=cfg.verbose
-                    )
-
-                    data_module.setup()
-                    
-                    if cfg.verbose:
-                        print_feature_info(data_module)
-                        print_dataset_info(data_module)
-
-                    if cfg.model.type.lower() == "lstm":
-                        model = LSTM(
-                            input_size=data_module.get_feature_dim(),
-                            hidden_size=cfg.model.hidden_size,
-                            num_layers=cfg.model.num_layers,
-                            dropout=cfg.model.dropout,
-                            layer_norm=cfg.model.lstm_specific.layer_norm,
-                            verbose=cfg.verbose
-                        )
-                    elif cfg.model.type.lower() == "xlstm":
-                        model = XLSTM(
-                            input_size=data_module.get_feature_dim(),
-                            hidden_size=cfg.model.hidden_size,
-                            num_layers=cfg.model.num_layers,
-                            dropout=cfg.model.dropout,
-                            layer_norm=cfg.model.lstm_specific.layer_norm,
-                            recurrent_dropout=cfg.model.xlstm_specific.recurrent_dropout,
-                            verbose=cfg.verbose
-                        )
-                    elif cfg.model.type.lower() == "gru":
-                        model = GRU(
-                            input_size=data_module.get_feature_dim(),
-                            hidden_size=cfg.model.hidden_size,
-                            num_layers=cfg.model.num_layers,
-                            dropout=cfg.model.dropout,
-                            batch_first=cfg.model.gru_specific.batch_first,
-                            bidirectional=cfg.model.bidirectional,
-                            bias=cfg.model.gru_specific.bias,
-                            verbose=cfg.verbose
-                        )
-                    elif cfg.model.type.lower() == "simplernn":
-                        model = SimpleRNN(
-                            input_size=data_module.get_feature_dim(),
-                            hidden_size=cfg.model.hidden_size,
-                            task_embedding_dim=cfg.model.task_embedding_dim,
+                    try:
+                        fold_seed = cfg.seed + fold
+                        
+                        data_module = HandwritingDataModule(
+                            s3_handler=s3_handler,
+                            file_key=file_key_load,
+                            batch_size=cfg.data.batch_size,
+                            window_size=window_size,
+                            stride=stride,
+                            num_workers=cfg.data.num_workers,
                             num_tasks=cfg.data.num_tasks,
-                            dropout=cfg.model.dropout,
-                            embedding_dropout=cfg.model.embedding_dropout,
-                            zoneout_prob=cfg.model.zoneout_prob,
-                            activity_l1=cfg.model.activity_l1,
-                            verbose=cfg.verbose
-                        )
-                    else:
-                        model = RNN(
-                            input_size=data_module.get_feature_dim(),
-                            hidden_size=cfg.model.hidden_size,
-                            num_layers=cfg.model.num_layers,
-                            num_tasks=cfg.data.num_tasks,
-                            task_embedding_dim=cfg.model.task_embedding_dim,
-                            nonlinearity=cfg.model.rnn_specific.nonlinearity,
-                            dropout=cfg.model.dropout,
+                            val_size=cfg.data.val_size,
+                            test_size=cfg.data.test_size,
+                            column_names=dict(cfg.data.columns),
+                            fold=fold,
+                            n_folds=cfg.num_folds,
+                            scaler_type=cfg.data.scaler,
+                            seed=fold_seed,
                             verbose=cfg.verbose
                         )
 
-                    model.model_config = {
-                        'learning_rate': cfg.training.learning_rate,
-                        'weight_decay': cfg.training.weight_decay
-                    }
+                        data_module.setup()
+                        
+                        if cfg.verbose:
+                            print_feature_info(data_module)
+                            print_dataset_info(data_module)
 
-                    # Set class weights if available
-                    if hasattr(data_module.train_dataset, 'class_weights'):
-                        model.set_class_weights(data_module.train_dataset)
+                        model = ModelFactory.create_model(cfg, data_module, window_size=window_size)
+                        model.model_config = {
+                            'learning_rate': cfg.training.learning_rate,
+                            'weight_decay': cfg.training.weight_decay
+                        }
 
-                    # Configure training and fit the model
-                    trainer_config, wandb_logger = configure_training(cfg)
-                    trainer = pl.Trainer(**trainer_config)
-                    trainer.fit(model, data_module)
-                    
-                    # Get window-level predictions
-                    train_subjects, train_labels, train_preds = get_predictions(trainer, model, data_module.train_dataloader())
-                    test_subjects, test_labels, test_preds = get_predictions(trainer, model, data_module.test_dataloader())
-                    
-                    # Compute subject-level metrics
-                    train_subject_metrics = compute_subject_metrics(train_subjects, train_labels, train_preds, cfg.verbose)
-                    test_subject_metrics = compute_subject_metrics(test_subjects, test_labels, test_preds, cfg.verbose)
-                    
-                    # Store metrics for this fold
-                    metrics = {
-                        'window_size': window_size,
-                        'stride': stride,
-                        'fold': fold + 1,
-                        'train_subject_acc': train_subject_metrics['subject_accuracy'],
-                        'train_subject_precision': train_subject_metrics['subject_precision'],
-                        'train_subject_recall': train_subject_metrics['subject_recall'],
-                        'train_subject_specificity': train_subject_metrics['subject_specificity'],
-                        'train_subject_f1': train_subject_metrics['subject_f1'],
-                        'train_subject_mcc': train_subject_metrics['subject_mcc'],
-                        'test_subject_acc': test_subject_metrics['subject_accuracy'],
-                        'test_subject_precision': test_subject_metrics['subject_precision'],
-                        'test_subject_recall': test_subject_metrics['subject_recall'],
-                        'test_subject_specificity': test_subject_metrics['subject_specificity'],
-                        'test_subject_f1': test_subject_metrics['subject_f1'],
-                        'test_subject_mcc': test_subject_metrics['subject_mcc'],
-                    }
-                    
-                    # Log metrics to wandb
-                    wandb_logger.log_metrics({
-                        **metrics,
-                        'epoch': trainer.current_epoch
-                    })
-                    
-                    fold_metrics.append(metrics)
-                    print_subject_metrics(train_subject_metrics, test_subject_metrics, fold, cfg.verbose)
-                    
+                        # Set class weights if available
+                        if hasattr(data_module.train_dataset, 'class_weights'):
+                            model.set_class_weights(data_module.train_dataset)
+
+                        # Configure training and fit the model
+                        trainer_config, wandb_logger = configure_training(cfg)
+                        trainer = pl.Trainer(**trainer_config)
+                        trainer.fit(model, data_module)
+                        
+                        # Get window-level predictions
+                        train_subjects, train_labels, train_preds = get_predictions(trainer, model, data_module.train_dataloader())
+                        test_subjects, test_labels, test_preds = get_predictions(trainer, model, data_module.test_dataloader())
+                        
+                        # Compute subject-level metrics
+                        train_subject_metrics = compute_subject_metrics(train_subjects, train_labels, train_preds, cfg.verbose)
+                        test_subject_metrics = compute_subject_metrics(test_subjects, test_labels, test_preds, cfg.verbose)
+                        
+                        # Store metrics for this fold
+                        metrics = {
+                            'window_size': window_size,
+                            'stride': stride,
+                            'fold': fold + 1,
+                            'train_subject_acc': train_subject_metrics['subject_accuracy'],
+                            'train_subject_precision': train_subject_metrics['subject_precision'],
+                            'train_subject_recall': train_subject_metrics['subject_recall'],
+                            'train_subject_specificity': train_subject_metrics['subject_specificity'],
+                            'train_subject_f1': train_subject_metrics['subject_f1'],
+                            'train_subject_mcc': train_subject_metrics['subject_mcc'],
+                            'test_subject_acc': test_subject_metrics['subject_accuracy'],
+                            'test_subject_precision': test_subject_metrics['subject_precision'],
+                            'test_subject_recall': test_subject_metrics['subject_recall'],
+                            'test_subject_specificity': test_subject_metrics['subject_specificity'],
+                            'test_subject_f1': test_subject_metrics['subject_f1'],
+                            'test_subject_mcc': test_subject_metrics['subject_mcc'],
+                        }
+                        
+                        # Safely log metrics to wandb
+                        safe_wandb_log(wandb_logger, metrics, trainer.current_epoch)
+                        
+                        fold_metrics.append(metrics)
+                        print_subject_metrics(train_subject_metrics, test_subject_metrics, fold, cfg.verbose)
+                    except Exception as e:
+                        rprint(f"[red]Error in fold {fold + 1}: {str(e)}[/red]")
+                        if cfg.test_mode:
+                            return
+                        else:
+                            continue
+                        
                     if cfg.test_mode and fold == 0:
                         break
         
-        # Save and display results
-        metrics_df = pd.DataFrame(fold_metrics)
+        if fold_metrics:
+            metrics_df = pd.DataFrame(fold_metrics)
+            process_metrics(metrics_df, window_size, stride, cfg)
+            try:
+                s3_handler.save_data(metrics_df, file_key_save)
+                rprint(f"[green]Successfully saved results to S3[/green]")
+            except Exception as e:
+                rprint(f"[red]Error saving results to S3: {str(e)}[/red]")
         
-        # Save to S3
-        s3_handler.save_data(metrics_df, file_key_save)
-        
-        # Display aggregated results with comprehensive metrics
-        mean_metrics = metrics_df.groupby(['window_size', 'stride']).mean()
-        std_metrics = metrics_df.groupby(['window_size', 'stride']).std()
-        
-        for (window_size, stride), metrics in mean_metrics.iterrows():
-            rprint(f"\n[bold blue]Results for window_size={window_size}, stride={stride}:[/bold blue]")
-            
-            metric_groups = {
-                'Training Metrics': 'train_subject_',
-                'Testing Metrics': 'test_subject_'
-            }
-            
-            for group_name, prefix in metric_groups.items():
-                rprint(f"\n[bold cyan]{group_name}:[/bold cyan]")
-                for metric in ['acc', 'precision', 'recall', 'specificity', 'f1', 'mcc']:
-                    metric_name = f"{prefix}{metric}"
-                    if metric_name in metrics:
-                        mean_val = metrics[metric_name]
-                        std_val = std_metrics.loc[(window_size, stride), metric_name]
-                        rprint(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}")
-
     except Exception as e:
         rprint(f"[red]Error in main function: {str(e)}[/red]")
         raise e
