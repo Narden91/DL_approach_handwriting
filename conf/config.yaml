@@ -17,7 +17,7 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: false
+test_mode: true
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
@@ -43,8 +43,8 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 100
-  learning_rate: 0.0005
+  max_epochs: 2
+  learning_rate: 0.001
   weight_decay: 0.0001
   early_stopping_patience: 10
   gradient_clip_val: 0.5
@@ -55,6 +55,7 @@ model:
   hidden_size: 256 # 128
   num_layers: 2 # 2
   dropout: 0.3 #0.2
+  task_embedding_dim: 32
   bidirectional: true
   lstm_specific:
     layer_norm: true

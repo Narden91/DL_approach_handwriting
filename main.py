@@ -13,6 +13,7 @@ from rich import print as rprint
 import random
 import numpy as np
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import TQDMProgressBar
 from src.data.datamodule import HandwritingDataModule
 from src.models.RNN import RNN
 from src.models.GRU import GRU 
@@ -22,8 +23,8 @@ from src.utils.trainer_visualizer import TrainingVisualizer
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
 from src.utils.config_operations import ConfigOperations
-from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_predictions, print_fold_completion
-from src.utils.majority_vote import majority_vote, get_predictions
+from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_subject_metrics
+from src.utils.majority_vote import get_predictions, compute_subject_metrics
 
 
 def set_global_seed(seed: int) -> None:
@@ -38,9 +39,7 @@ def set_global_seed(seed: int) -> None:
 
 
 def configure_training(config):
-    """
-    Configure training with improved progress bar handling.
-    """
+    """Configure training with wandb logger."""
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     visualizer = TrainingVisualizer()
@@ -50,7 +49,7 @@ def configure_training(config):
         leave=True
     )
     
-    # Add Wandb logger
+    # Initialize Wandb logger
     wandb_logger = WandbLogger(
         project="handwriting_analysis",
         name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
@@ -64,7 +63,7 @@ def configure_training(config):
         "gradient_clip_val": config.training.gradient_clip_val,
         "callbacks": [
             EarlyStopping(
-                monitor="val_mcc",
+                monitor="val_ap",
                 patience=config.training.early_stopping_patience,
                 mode="max",
                 verbose=True
@@ -76,19 +75,11 @@ def configure_training(config):
         "enable_model_summary": True,
         "strategy": "auto",
         "sync_batchnorm": False,
-        # Use Wandb logger
         "logger": wandb_logger,
         "enable_checkpointing": False,
         "enable_model_summary": True
-        # "enable_progress_bar": True,
-        # "enable_model_summary": True,
-        # "strategy": "auto",
-        # "sync_batchnorm": False,
-        # "logger": False,
-        # "enable_checkpointing": False,
-        # "enable_model_summary": True
     }
-    return trainer_config
+    return trainer_config, wandb_logger
             
 
 @hydra.main(version_base="1.1", config_path="./conf", config_name="config")
@@ -177,6 +168,8 @@ def main(cfg: DictConfig) -> None:
                             input_size=data_module.get_feature_dim(),
                             hidden_size=cfg.model.hidden_size,
                             num_layers=cfg.model.num_layers,
+                            num_tasks=cfg.data.num_tasks,
+                            task_embedding_dim=cfg.model.task_embedding_dim,
                             nonlinearity=cfg.model.rnn_specific.nonlinearity,
                             dropout=cfg.model.dropout,
                             verbose=cfg.verbose
@@ -188,59 +181,75 @@ def main(cfg: DictConfig) -> None:
                     }
 
                     # Configure training and fit the model
-                    trainer_config = configure_training(cfg)
+                    trainer_config, wandb_logger = configure_training(cfg)
                     trainer = pl.Trainer(**trainer_config)
                     trainer.fit(model, data_module)
                     
-                    # Save the validation metrics
-                    val_metrics = {
-                        'val_loss': trainer.callback_metrics['val_loss'].item(),
-                        'val_acc': trainer.callback_metrics['val_acc'].item(),
-                        'val_f1': trainer.callback_metrics['val_f1'].item(),
-                        'val_mcc': trainer.callback_metrics['val_mcc'].item()
-                    }
+                    # Get window-level predictions
+                    train_subjects, train_labels, train_preds = get_predictions(trainer, model, data_module.train_dataloader())
+                    test_subjects, test_labels, test_preds = get_predictions(trainer, model, data_module.test_dataloader())
                     
-                    # Test the model
-                    trainer.test(model, datamodule=data_module, verbose=cfg.verbose)
+                    # Compute subject-level metrics
+                    train_subject_metrics = compute_subject_metrics(train_subjects, train_labels, train_preds, cfg.verbose)
+                    test_subject_metrics = compute_subject_metrics(test_subjects, test_labels, test_preds, cfg.verbose)
                     
-                    # Store metrics for current fold
-                    fold_metrics.append({
+                    # Store metrics for this fold
+                    metrics = {
                         'window_size': window_size,
                         'stride': stride,
                         'fold': fold + 1,
-                        **val_metrics,
-                        'test_loss': trainer.callback_metrics['test_loss'].item(),
-                        'test_acc': trainer.callback_metrics['test_acc'].item(),
-                        'test_f1': trainer.callback_metrics['test_f1'].item(),
-                        'test_mcc': trainer.callback_metrics['test_mcc'].item()
+                        'train_subject_acc': train_subject_metrics['subject_accuracy'],
+                        'train_subject_precision': train_subject_metrics['subject_precision'],
+                        'train_subject_recall': train_subject_metrics['subject_recall'],
+                        'train_subject_specificity': train_subject_metrics['subject_specificity'],
+                        'train_subject_f1': train_subject_metrics['subject_f1'],
+                        'train_subject_mcc': train_subject_metrics['subject_mcc'],
+                        'test_subject_acc': test_subject_metrics['subject_accuracy'],
+                        'test_subject_precision': test_subject_metrics['subject_precision'],
+                        'test_subject_recall': test_subject_metrics['subject_recall'],
+                        'test_subject_specificity': test_subject_metrics['subject_specificity'],
+                        'test_subject_f1': test_subject_metrics['subject_f1'],
+                        'test_subject_mcc': test_subject_metrics['subject_mcc'],
+                    }
+                    
+                    # Log metrics to wandb
+                    wandb_logger.log_metrics({
+                        **metrics,
+                        'epoch': trainer.current_epoch
                     })
-
-                    if cfg.verbose:
-                        # Get predictions for train and test sets
-                        train_subjects, train_labels, train_preds = get_predictions(trainer, model, data_module.train_dataloader())
-                        test_subjects, test_labels, test_preds = get_predictions(trainer, model, data_module.test_dataloader())
-                        print_predictions(train_subjects, train_labels, train_preds, fold, "train")
-                        print_predictions(test_subjects, test_labels, test_preds, fold, "test")
-                        print_fold_completion(fold, trainer)
-                        
+                    
+                    fold_metrics.append(metrics)
+                    print_subject_metrics(train_subject_metrics, test_subject_metrics, fold, cfg.verbose)
+                    
                     if cfg.test_mode and fold == 0:
                         break
         
+        # Save and display results
         metrics_df = pd.DataFrame(fold_metrics)
-        rprint("\n[bold blue]Cross Validation Results:[/bold blue]")
-        rprint(metrics_df.to_string())
-
-        # Save results to CSV file on S3 bucket
+        
+        # Save to S3
         s3_handler.save_data(metrics_df, file_key_save)
-
+        
+        # Display aggregated results with comprehensive metrics
         mean_metrics = metrics_df.groupby(['window_size', 'stride']).mean()
         std_metrics = metrics_df.groupby(['window_size', 'stride']).std()
+        
         for (window_size, stride), metrics in mean_metrics.iterrows():
             rprint(f"\n[bold blue]Results for window_size={window_size}, stride={stride}:[/bold blue]")
-            for metric in ['val_loss', 'val_acc', 'val_f1', 'val_mcc']:
-                rprint(f"{metric}: {metrics[metric]:.4f} ± {std_metrics.loc[(window_size, stride), metric]:.4f}")
-            for metric in ['test_loss', 'test_acc', 'test_f1', 'test_mcc']:
-                rprint(f"{metric}: {metrics[metric]:.4f} ± {std_metrics.loc[(window_size, stride), metric]:.4f}")
+            
+            metric_groups = {
+                'Training Metrics': 'train_subject_',
+                'Testing Metrics': 'test_subject_'
+            }
+            
+            for group_name, prefix in metric_groups.items():
+                rprint(f"\n[bold cyan]{group_name}:[/bold cyan]")
+                for metric in ['acc', 'precision', 'recall', 'specificity', 'f1', 'mcc']:
+                    metric_name = f"{prefix}{metric}"
+                    if metric_name in metrics:
+                        mean_val = metrics[metric_name]
+                        std_val = std_metrics.loc[(window_size, stride), metric_name]
+                        rprint(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}")
 
     except Exception as e:
         rprint(f"[red]Error in main function: {str(e)}[/red]")

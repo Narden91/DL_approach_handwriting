@@ -203,3 +203,30 @@ def print_fold_completion(fold, trainer):
     rprint(f"Validation Accuracy: {trainer.callback_metrics['val_acc']:.4f}")
     rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
     rprint(f"Validation MCC: {trainer.callback_metrics['val_mcc']:.4f}")
+    
+
+def print_subject_metrics(train_metrics, test_metrics, fold, verbose=True):
+    """Helper function to print comprehensive subject-level metrics"""
+    if not verbose:
+        return
+        
+    rprint(f"\n[bold cyan]Fold {fold + 1} Subject-Level Metrics:[/bold cyan]")
+    
+    metrics_display = [
+        ('Accuracy', 'subject_accuracy'),
+        ('Precision', 'subject_precision'),
+        ('Recall/Sensitivity', 'subject_recall'),
+        ('Specificity', 'subject_specificity'),
+        ('F1 Score', 'subject_f1'),
+        ('MCC', 'subject_mcc')
+    ]
+    
+    rprint("\n[bold green]Training Metrics:[/bold green]")
+    for metric_name, metric_key in metrics_display:
+        if metric_key in train_metrics:
+            rprint(f"{metric_name}: {train_metrics[metric_key]:.4f}")
+    
+    rprint("\n[bold yellow]Testing Metrics:[/bold yellow]")
+    for metric_name, metric_key in metrics_display:
+        if metric_key in test_metrics:
+            rprint(f"{metric_name}: {test_metrics[metric_key]:.4f}")

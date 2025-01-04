@@ -1,3 +1,4 @@
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -46,13 +47,19 @@ class RNNDebugger:
         return True
 
 class RNN(BaseModel):
-    def __init__(self, input_size=13, hidden_size=128, num_layers=2, nonlinearity="tanh", dropout=0.1, verbose=False):
+    def __init__(self, input_size=13, hidden_size=128, num_layers=2, 
+                 num_tasks=34, task_embedding_dim=32, nonlinearity="tanh", 
+                 dropout=0.1, verbose=False):
         super().__init__()
-        # self.save_hyperparameters()
         
         self.input_norm = nn.BatchNorm1d(input_size, eps=1e-5, momentum=0.1)
+        self.task_embedding = nn.Embedding(num_tasks+1, task_embedding_dim)  # +1 for padding
+        
+        # Combine feature dimensions with task embeddings
+        rnn_input_size = input_size + task_embedding_dim
+        
         self.rnn = nn.RNN(
-            input_size=input_size,
+            input_size=rnn_input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             nonlinearity=nonlinearity,
@@ -63,6 +70,7 @@ class RNN(BaseModel):
         
         self.classifier = nn.Linear(hidden_size * 2, 1)
         self._init_weights()
+        self.verbose = verbose
 
     def _init_weights(self):
         for name, param in self.rnn.named_parameters():
@@ -72,19 +80,68 @@ class RNN(BaseModel):
                 nn.init.constant_(param, 0.0)
 
     def forward(self, x, task_ids, masks):
+        # Handle NaN and extreme values
         x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
         x = torch.clamp(x, -10, 10)
+        
+        # Normalize features
         x = self.input_norm(x.transpose(1,2)).transpose(1,2)
         
+        # Process task embeddings
+        task_ids = task_ids.squeeze(-1)  # Remove extra dimensions
+        task_emb = self.task_embedding(task_ids)  # [batch_size, embedding_dim]
+        task_emb = task_emb.unsqueeze(1).repeat(1, x.size(1), 1)  # [batch_size, seq_len, embedding_dim]
+        
+        # Combine features with task embeddings
+        x = torch.cat([x, task_emb], dim=-1)
+        
+        # Apply masking
+        if masks is not None:
+            x = x * masks.unsqueeze(-1)
+        
+        # RNN forward pass
         outputs, _ = self.rnn(x)
         outputs = F.relu(outputs)
         outputs = F.dropout(outputs, p=0.1, training=self.training)
+        
+        # Get final prediction
         return self.classifier(outputs[:, -1, :])
-    
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.model_config['learning_rate'],
-            weight_decay=self.model_config['weight_decay']
-        )
-        return optimizer
+
+    # def configure_optimizers(self):
+    #     optimizer = torch.optim.AdamW(
+    #         self.parameters(),
+    #         lr=self.model_config['learning_rate'],
+    #         weight_decay=self.model_config['weight_decay']
+    #     )
+        
+    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #         optimizer,
+    #         mode='min',
+    #         factor=0.5,
+    #         patience=5,
+    #         verbose=self.verbose
+    #     )
+        
+    #     return {
+    #         "optimizer": optimizer,
+    #         "lr_scheduler": {
+    #             "scheduler": scheduler,
+    #             "monitor": "val_loss"
+    #         }
+    #     }
+
+
+    def aggregate_predictions(self, window_preds, subject_ids):
+        """Aggregate window-level predictions to subject-level"""
+        pred_probs = torch.sigmoid(window_preds).cpu().numpy()
+        subject_preds = {}
+        
+        for pred, subj_id in zip(pred_probs, subject_ids):
+            if subj_id not in subject_preds:
+                subject_preds[subj_id] = []
+            subject_preds[subj_id].append(pred)
+        
+        # Average predictions for each subject
+        final_preds = {subj: np.mean(preds) > 0.5 
+                      for subj, preds in subject_preds.items()}
+        return final_preds

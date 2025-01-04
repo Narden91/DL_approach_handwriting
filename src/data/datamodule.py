@@ -1,6 +1,5 @@
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
-import boto3
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
@@ -8,9 +7,8 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler, RobustScaler
 import torch
 from torch.utils.data import Dataset, DataLoader
 from rich import print as rprint
-
 from s3_operations.s3_io import S3IOHandler
-# from s3_operations.s3_handler import config
+from src.data.balanced_batch import BalancedBatchSampler
 
 
 class HandwritingDataset(Dataset):
@@ -235,142 +233,183 @@ class HandwritingDataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         """Load and preprocess the data with correct subject distribution."""
-        rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]") if self.verbose else None
-        
-        # Load and preprocess data
-        data = self._load_aggregated_data()
-        data = self._preprocess_categorical(data)
-        
-        rprint(f"[blue]Data loaded and preprocessed successfully:[/blue]\n{data}") if self.verbose else None
-        
-        # Update column names for encoded labels
-        if 'Label' in self.column_names.values():
-            self.column_names = {k: v + '_encoded' if v == 'Label' else v 
-                            for k, v in self.column_names.items()}
-        
-        # Define metadata columns
-        metadata_cols = [
-            self.column_names['id'],
-            self.column_names['segment'],
-            self.column_names['task'],
-            self.column_names['label']
-        ]
-        
-        # Set feature columns
-        self.feature_cols = [col for col in data.columns 
+        try:
+            if self.verbose:
+                rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]")
+            
+            # Load and preprocess data
+            data = self._load_aggregated_data()
+            if data is None or data.empty:
+                raise ValueError("Failed to load data or data is empty")
+                
+            data = self._preprocess_categorical(data)
+            
+            # Update column names for encoded labels
+            if 'Label' in self.column_names.values():
+                self.column_names = {k: v + '_encoded' if v == 'Label' else v 
+                                for k, v in self.column_names.items()}
+            
+            # Validate required columns exist
+            required_cols = [self.column_names[k] for k in ['id', 'segment', 'task', 'label']]
+            missing_cols = [col for col in required_cols if col not in data.columns]
+            if missing_cols:
+                raise ValueError(f"Missing required columns: {missing_cols}")
+            
+            # Define metadata and feature columns
+            metadata_cols = required_cols
+            self.feature_cols = [col for col in data.columns 
                             if col not in metadata_cols 
                             and col not in ['Id', 'Segment']
                             and not col.endswith('_label')]
-        
-        # Set multi-index
-        data = data.set_index([self.column_names['id'], self.column_names['segment']])
-        
-        # Get unique subjects and verify count
-        unique_subjects = data.index.get_level_values(0).unique()
-        total_subjects = len(unique_subjects)
-        assert total_subjects == 174, f"Expected 174 subjects, got {total_subjects}"
-        
-        # Calculate split sizes (70/15/15)
-        test_size = int(self.test_size * total_subjects) 
-        val_size = int(self.val_size * total_subjects)  
-        train_size = total_subjects - (test_size + val_size)
-        
-        # Create splits
-        np.random.seed(self.seed)
-        shuffled_subjects = np.random.permutation(unique_subjects)
-        
-        if stage == "fit" or stage is None:
-            # Create train/val split
-            train_subjects = shuffled_subjects[:train_size]
-            val_subjects = shuffled_subjects[train_size:train_size + val_size]
             
-            train_data = data[data.index.get_level_values(0).isin(train_subjects)]
-            val_data = data[data.index.get_level_values(0).isin(val_subjects)]
+            if not self.feature_cols:
+                raise ValueError("No feature columns identified")
             
-            self.train_dataset = HandwritingDataset(
-                data=train_data,
-                window_size=self.window_size,
-                stride=self.stride,
-                feature_cols=self.feature_cols,
-                column_names=self.column_names,
-                scaler_type=self.scaler_type,
-                train=True,
-                verbose=self.verbose
-            )
+            # Use index columns but don't verify integrity to allow duplicates
+            data.set_index([self.column_names['id'], self.column_names['segment']], inplace=True)
             
-            self.val_dataset = HandwritingDataset(
-                data=val_data,
-                window_size=self.window_size,
-                stride=self.stride,
-                feature_cols=self.feature_cols,
-                column_names=self.column_names,
-                scaler=self.train_dataset.scaler,
-                scaler_type=self.scaler_type,
-                train=False,
-                verbose=self.verbose
-            )
+            # Validate subjects count
+            unique_subjects = data.index.get_level_values(0).unique()
+            total_subjects = len(unique_subjects)
+            if total_subjects != 174:
+                raise ValueError(f"Expected 174 subjects, got {total_subjects}")
+            
+            # Calculate split sizes
+            test_size = int(self.test_size * total_subjects)
+            val_size = int(self.val_size * total_subjects)
+            train_size = total_subjects - (test_size + val_size)
+            
+            if train_size + val_size + test_size != total_subjects:
+                raise ValueError("Split sizes don't sum to total subjects")
+            
+            # Create deterministic splits
+            np.random.seed(self.seed)
+            shuffled_subjects = np.random.permutation(unique_subjects)
+            
+            if stage == "fit" or stage is None:
+                # Create and validate train/val splits
+                train_subjects = shuffled_subjects[:train_size]
+                val_subjects = shuffled_subjects[train_size:train_size + val_size]
+                
+                train_data = data[data.index.get_level_values(0).isin(train_subjects)]
+                val_data = data[data.index.get_level_values(0).isin(val_subjects)]
+                
+                # Compute class weights for training
+                class_counts = train_data[self.column_names['label']].value_counts().to_dict()
+                self.class_weights = {
+                    cls: len(train_data) / (2 * count)
+                    for cls, count in class_counts.items()
+                }
+                
+                if self.verbose:
+                    total = sum(class_counts.values())
+                    rprint("\n[blue]Class distribution at stroke level:[/blue]")
+                    for cls, count in class_counts.items():
+                        percentage = (count / total) * 100
+                        weight = self.class_weights[cls]
+                        rprint(f"Class {cls}: {count} samples ({percentage:.2f}%) - weight: {weight:.4f}")
+                
+                # Initialize datasets
+                self.train_dataset = self._create_dataset(
+                    data=train_data,
+                    is_train=True,
+                    scaler=None
+                )
+                
+                self.val_dataset = self._create_dataset(
+                    data=val_data,
+                    is_train=False,
+                    scaler=self.train_dataset.scaler
+                )
+            
+            if stage == "test" or stage is None:
+                # Create test split
+                test_subjects = shuffled_subjects[train_size + val_size:]
+                test_data = data[data.index.get_level_values(0).isin(test_subjects)]
+                
+                self.test_dataset = self._create_dataset(
+                    data=test_data,
+                    is_train=False,
+                    scaler=self.train_dataset.scaler if hasattr(self, 'train_dataset') else None
+                )
+            
+            # Verify split integrity
+            if stage is None:
+                train_ids = set(train_subjects)
+                val_ids = set(val_subjects)
+                test_ids = set(test_subjects)
+                
+                overlaps = [
+                    (train_ids & val_ids, "train and validation"),
+                    (train_ids & test_ids, "train and test"),
+                    (val_ids & test_ids, "validation and test")
+                ]
+                
+                for overlap, sets_name in overlaps:
+                    if overlap:
+                        raise ValueError(f"Overlap found between {sets_name} sets: {overlap}")
+                
+                if self.verbose:
+                    rprint(f"\n[green]Dataset split successful:[/green]")
+                    rprint(f"Train subjects: {len(train_ids)}")
+                    rprint(f"Val subjects: {len(val_ids)}")
+                    rprint(f"Test subjects: {len(test_ids)}")
+                    
+        except Exception as e:
+            rprint(f"[red]Error in setup: {str(e)}[/red]")
+            raise
 
-        if stage == "test" or stage is None:
-            # Create test split
-            test_subjects = shuffled_subjects[train_size + val_size:]
-            test_data = data[data.index.get_level_values(0).isin(test_subjects)]
+    def _create_dataset(self, data: pd.DataFrame, is_train: bool, scaler: Optional[object] = None) -> HandwritingDataset:
+        """Helper method to create and validate datasets."""
+        if data.empty:
+            raise ValueError(f"Empty data for {'training' if is_train else 'validation/testing'} dataset")
             
-            self.test_dataset = HandwritingDataset(
-                data=test_data,
-                window_size=self.window_size,
-                stride=self.stride,
-                feature_cols=self.feature_cols,
-                column_names=self.column_names,
-                scaler=self.train_dataset.scaler if hasattr(self, 'train_dataset') else None,
-                scaler_type=self.scaler_type,
-                train=False,
-                verbose=self.verbose
-            )
-        
-        # Verify splits
-        if stage is None:
-            train_ids = set(train_subjects)
-            val_ids = set(val_subjects)
-            test_ids = set(test_subjects)
-            
-            assert len(train_ids & val_ids) == 0, "Overlap found between train and val sets"
-            assert len(train_ids & test_ids) == 0, "Overlap found between train and test sets"
-            assert len(val_ids & test_ids) == 0, "Overlap found between val and test sets"
-            
-            if self.verbose:
-                rprint(f"[green]Dataset split successful:[/green]")
-                rprint(f"Train subjects: {len(train_ids)}")
-                rprint(f"Val subjects: {len(val_ids)}")
-                rprint(f"Test subjects: {len(test_ids)}")
+        return HandwritingDataset(
+            data=data,
+            window_size=self.window_size,
+            stride=self.stride,
+            feature_cols=self.feature_cols,
+            column_names=self.column_names,
+            scaler=scaler,
+            scaler_type=self.scaler_type,
+            train=is_train,
+            verbose=self.verbose
+        )
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
+            batch_sampler=BalancedBatchSampler(
+                self.train_dataset, 
+                self.batch_size
+            ),
             num_workers=self.num_workers,
             pin_memory=True,
-            persistent_workers=True
+            persistent_workers=True if self.num_workers > 0 else False
         )
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
+            batch_sampler=BalancedBatchSampler(
+                self.val_dataset, 
+                self.batch_size
+            ),
             num_workers=self.num_workers,
             pin_memory=True,
-            persistent_workers=True
+            persistent_workers=True if self.num_workers > 0 else False
         )
 
     def test_dataloader(self) -> DataLoader:
         return DataLoader(
             self.test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
+            batch_sampler=BalancedBatchSampler(
+                self.test_dataset, 
+                self.batch_size
+            ),
             num_workers=self.num_workers,
             pin_memory=True,
-            persistent_workers=True
+            persistent_workers=True if self.num_workers > 0 else False
         )
     
     def get_feature_dim(self) -> int:
