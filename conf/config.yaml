@@ -1,10 +1,3 @@
-# defaults:
-#   - _self_
-
-# hydra:
-#   job:
-#     chdir: false
-
 defaults:  
   - _self_  
   - override hydra/hydra_logging: disabled  
@@ -44,23 +37,26 @@ data:
 
 training:
   max_epochs: 2
-  learning_rate: 0.001
+  learning_rate: 0.0001
   weight_decay: 0.0001
   early_stopping_patience: 10
-  gradient_clip_val: 0.5
+  gradient_clip_val: 0.7
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm"
-  hidden_size: 256 # 128
+  type: "simpleRNN"  # Options: "rnn" or "lstm" or "gru" or "xlstm" "simpleRNN"
+  hidden_size: 128
   num_layers: 2 # 2
-  dropout: 0.3 #0.2
   task_embedding_dim: 32
+  dropout: 0.3
+  embedding_dropout: 0.1
+  zoneout_prob: 0.1
+  activity_l1: 0.01
   bidirectional: true
-  lstm_specific:
-    layer_norm: true
   rnn_specific:
     nonlinearity: "tanh"
+  lstm_specific:
+    layer_norm: true
   gru_specific:
     batch_first: true
     bias: true

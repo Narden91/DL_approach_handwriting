@@ -13,13 +13,14 @@ from rich import print as rprint
 import random
 import numpy as np
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import TQDMProgressBar
 from src.data.datamodule import HandwritingDataModule
 from src.models.RNN import RNN
+from src.models.simpleRNN import SimpleRNN
 from src.models.GRU import GRU 
 from src.models.XLSTM import XLSTM
 from src.models.LSTM import LSTM
 from src.utils.trainer_visualizer import TrainingVisualizer
+from src.utils.callbacks import GradientMonitorCallback, ThresholdTuner
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
 from src.utils.config_operations import ConfigOperations
@@ -39,22 +40,30 @@ def set_global_seed(seed: int) -> None:
 
 
 def configure_training(config):
-    """Configure training with wandb logger."""
+    """Configure training with wandb logger and callbacks."""
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    visualizer = TrainingVisualizer()
+    
+    # Initialize callbacks
     progress_bar = pl.callbacks.progress.TQDMProgressBar(
         refresh_rate=1,
         process_position=0,
-        leave=True
     )
+    
+    early_stopping = EarlyStopping(
+        monitor="val_f1",
+        patience=config.training.early_stopping_patience,
+        mode="max",
+        verbose=True
+    )
+    
+    threshold_tuner = ThresholdTuner()
     
     # Initialize Wandb logger
     wandb_logger = WandbLogger(
         project="handwriting_analysis",
         name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
     )
-    wandb_logger.experiment.config.update(dict(config), allow_val_change=True)
     
     trainer_config = {
         "accelerator": "gpu",
@@ -62,23 +71,18 @@ def configure_training(config):
         "max_epochs": config.training.max_epochs,
         "gradient_clip_val": config.training.gradient_clip_val,
         "callbacks": [
-            EarlyStopping(
-                monitor="val_ap",
-                patience=config.training.early_stopping_patience,
-                mode="max",
-                verbose=True
-            ),
+            early_stopping,
             progress_bar,
-            visualizer
+            threshold_tuner,
+            GradientMonitorCallback()
         ],
-        "enable_progress_bar": True,
-        "enable_model_summary": True,
-        "strategy": "auto",
-        "sync_batchnorm": False,
         "logger": wandb_logger,
+        "log_every_n_steps": 10,
+        "val_check_interval": 0.5,
         "enable_checkpointing": False,
-        "enable_model_summary": True
+        "deterministic": True
     }
+    
     return trainer_config, wandb_logger
             
 
@@ -163,6 +167,18 @@ def main(cfg: DictConfig) -> None:
                             bias=cfg.model.gru_specific.bias,
                             verbose=cfg.verbose
                         )
+                    elif cfg.model.type.lower() == "simplernn":
+                        model = SimpleRNN(
+                            input_size=data_module.get_feature_dim(),
+                            hidden_size=cfg.model.hidden_size,
+                            task_embedding_dim=cfg.model.task_embedding_dim,
+                            num_tasks=cfg.data.num_tasks,
+                            dropout=cfg.model.dropout,
+                            embedding_dropout=cfg.model.embedding_dropout,
+                            zoneout_prob=cfg.model.zoneout_prob,
+                            activity_l1=cfg.model.activity_l1,
+                            verbose=cfg.verbose
+                        )
                     else:
                         model = RNN(
                             input_size=data_module.get_feature_dim(),
@@ -179,6 +195,10 @@ def main(cfg: DictConfig) -> None:
                         'learning_rate': cfg.training.learning_rate,
                         'weight_decay': cfg.training.weight_decay
                     }
+
+                    # Set class weights if available
+                    if hasattr(data_module.train_dataset, 'class_weights'):
+                        model.set_class_weights(data_module.train_dataset)
 
                     # Configure training and fit the model
                     trainer_config, wandb_logger = configure_training(cfg)

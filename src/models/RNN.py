@@ -78,19 +78,35 @@ class RNN(BaseModel):
                 nn.init.xavier_uniform_(param, gain=0.1)
             elif 'bias' in name:
                 nn.init.constant_(param, 0.0)
+                
+    def set_class_weights(self, dataset):
+        if hasattr(dataset, 'class_weights'):
+            self.class_weights = torch.tensor([
+                dataset.class_weights[0],
+                dataset.class_weights[1]
+            ], device=self.device)
 
     def forward(self, x, task_ids, masks):
-        # Handle NaN and extreme values
-        x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
-        x = torch.clamp(x, -10, 10)
+        """
+        Args:
+            x: Tensor of shape (batch_size, seq_len, num_features)
+            task_ids: Tensor of shape (batch_size, 1)
+            masks: Tensor of shape (batch_size, seq_len)
+        """
         
-        # Normalize features
+        # Less aggressive normalization
+        x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
+        x = torch.clamp(x, -100, 100)  # Wider range
+        
+        # Add residual connection
+        identity = x
         x = self.input_norm(x.transpose(1,2)).transpose(1,2)
+        x = x + identity  # Residual connection
         
         # Process task embeddings
-        task_ids = task_ids.squeeze(-1)  # Remove extra dimensions
-        task_emb = self.task_embedding(task_ids)  # [batch_size, embedding_dim]
-        task_emb = task_emb.unsqueeze(1).repeat(1, x.size(1), 1)  # [batch_size, seq_len, embedding_dim]
+        task_ids = task_ids.squeeze(-1)
+        task_emb = self.task_embedding(task_ids)
+        task_emb = task_emb.unsqueeze(1).repeat(1, x.size(1), 1)
         
         # Combine features with task embeddings
         x = torch.cat([x, task_emb], dim=-1)
@@ -104,32 +120,7 @@ class RNN(BaseModel):
         outputs = F.relu(outputs)
         outputs = F.dropout(outputs, p=0.1, training=self.training)
         
-        # Get final prediction
         return self.classifier(outputs[:, -1, :])
-
-    # def configure_optimizers(self):
-    #     optimizer = torch.optim.AdamW(
-    #         self.parameters(),
-    #         lr=self.model_config['learning_rate'],
-    #         weight_decay=self.model_config['weight_decay']
-    #     )
-        
-    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #         optimizer,
-    #         mode='min',
-    #         factor=0.5,
-    #         patience=5,
-    #         verbose=self.verbose
-    #     )
-        
-    #     return {
-    #         "optimizer": optimizer,
-    #         "lr_scheduler": {
-    #             "scheduler": scheduler,
-    #             "monitor": "val_loss"
-    #         }
-    #     }
-
 
     def aggregate_predictions(self, window_preds, subject_ids):
         """Aggregate window-level predictions to subject-level"""

@@ -9,6 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 from rich import print as rprint
 from s3_operations.s3_io import S3IOHandler
 from src.data.balanced_batch import BalancedBatchSampler
+from src.data.stratified_k_fold import StratifiedSubjectWindowKFold
 
 
 class HandwritingDataset(Dataset):
@@ -232,7 +233,7 @@ class HandwritingDataModule(pl.LightningDataModule):
         return df
 
     def setup(self, stage: Optional[str] = None):
-        """Load and preprocess the data with correct subject distribution."""
+        """Load and preprocess the data with stratified subject distribution."""
         try:
             if self.verbose:
                 rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]")
@@ -274,90 +275,215 @@ class HandwritingDataModule(pl.LightningDataModule):
             if total_subjects != 174:
                 raise ValueError(f"Expected 174 subjects, got {total_subjects}")
             
-            # Calculate split sizes
-            test_size = int(self.test_size * total_subjects)
-            val_size = int(self.val_size * total_subjects)
-            train_size = total_subjects - (test_size + val_size)
+            # Initialize the stratified k-fold splitter
+            splitter = StratifiedSubjectWindowKFold(
+                n_splits=self.n_folds,
+                test_size=self.test_size,
+                shuffle=True,
+                random_state=self.seed
+            )
             
-            if train_size + val_size + test_size != total_subjects:
-                raise ValueError("Split sizes don't sum to total subjects")
+            # Set window parameters
+            splitter.set_window_params(
+                window_size=self.window_size,
+                stride=self.stride,
+                verbose=self.verbose
+            )
             
-            # Create deterministic splits
-            np.random.seed(self.seed)
-            shuffled_subjects = np.random.permutation(unique_subjects)
+            # Get splits for current fold
+            splits = list(splitter.split(data, self.column_names))
             
+            if self.fold >= len(splits):
+                raise ValueError(f"Invalid fold index {self.fold}. Only {len(splits)} folds available.")
+            
+            train_idx, val_idx, test_idx = splits[self.fold]
+            
+            # Verify non-empty splits
+            if len(train_idx) == 0:
+                raise ValueError(f"Empty training split detected for fold {self.fold + 1}")
+            if len(val_idx) == 0:
+                raise ValueError(f"Empty validation split detected for fold {self.fold + 1}")
+            if len(test_idx) == 0:
+                raise ValueError(f"Empty test split detected for fold {self.fold + 1}")
+            
+            # Split data
+            train_data = data.iloc[train_idx].copy()
+            val_data = data.iloc[val_idx].copy()
+            test_data = data.iloc[test_idx].copy()
+            
+            if self.verbose:
+                rprint(f"\n[blue]Data split sizes:[/blue]")
+                rprint(f"Training data: {len(train_data)} segments, {len(train_data.index.get_level_values(0).unique())} subjects")
+                rprint(f"Validation data: {len(val_data)} segments, {len(val_data.index.get_level_values(0).unique())} subjects")
+                rprint(f"Test data: {len(test_data)} segments, {len(test_data.index.get_level_values(0).unique())} subjects")
+            
+            # Initialize training dataset first
             if stage == "fit" or stage is None:
-                # Create and validate train/val splits
-                train_subjects = shuffled_subjects[:train_size]
-                val_subjects = shuffled_subjects[train_size:train_size + val_size]
-                
-                train_data = data[data.index.get_level_values(0).isin(train_subjects)]
-                val_data = data[data.index.get_level_values(0).isin(val_subjects)]
-                
-                # Compute class weights for training
-                class_counts = train_data[self.column_names['label']].value_counts().to_dict()
-                self.class_weights = {
-                    cls: len(train_data) / (2 * count)
-                    for cls, count in class_counts.items()
-                }
-                
-                if self.verbose:
-                    total = sum(class_counts.values())
-                    rprint("\n[blue]Class distribution at stroke level:[/blue]")
-                    for cls, count in class_counts.items():
-                        percentage = (count / total) * 100
-                        weight = self.class_weights[cls]
-                        rprint(f"Class {cls}: {count} samples ({percentage:.2f}%) - weight: {weight:.4f}")
-                
-                # Initialize datasets
                 self.train_dataset = self._create_dataset(
                     data=train_data,
                     is_train=True,
                     scaler=None
                 )
                 
+                # Initialize validation dataset
                 self.val_dataset = self._create_dataset(
                     data=val_data,
                     is_train=False,
                     scaler=self.train_dataset.scaler
                 )
-            
-            if stage == "test" or stage is None:
-                # Create test split
-                test_subjects = shuffled_subjects[train_size + val_size:]
-                test_data = data[data.index.get_level_values(0).isin(test_subjects)]
                 
+                # Compute and store class weights
+                labels = train_data[self.column_names['label']]
+                class_counts = labels.value_counts()
+                self.class_weights = {
+                    label: len(labels) / (2 * count)
+                    for label, count in class_counts.items()
+                }
+                
+                if self.verbose:
+                    rprint("\n[blue]Class weights:[/blue]")
+                    for label, weight in self.class_weights.items():
+                        rprint(f"Class {label}: {weight:.4f}")
+            
+            # Initialize test dataset if needed
+            if stage == "test" or stage is None:
                 self.test_dataset = self._create_dataset(
                     data=test_data,
                     is_train=False,
                     scaler=self.train_dataset.scaler if hasattr(self, 'train_dataset') else None
                 )
             
-            # Verify split integrity
-            if stage is None:
-                train_ids = set(train_subjects)
-                val_ids = set(val_subjects)
-                test_ids = set(test_subjects)
-                
-                overlaps = [
-                    (train_ids & val_ids, "train and validation"),
-                    (train_ids & test_ids, "train and test"),
-                    (val_ids & test_ids, "validation and test")
-                ]
-                
-                for overlap, sets_name in overlaps:
-                    if overlap:
-                        raise ValueError(f"Overlap found between {sets_name} sets: {overlap}")
-                
-                if self.verbose:
-                    rprint(f"\n[green]Dataset split successful:[/green]")
-                    rprint(f"Train subjects: {len(train_ids)}")
-                    rprint(f"Val subjects: {len(val_ids)}")
-                    rprint(f"Test subjects: {len(test_ids)}")
-                    
         except Exception as e:
             rprint(f"[red]Error in setup: {str(e)}[/red]")
             raise
+        
+    # def setup(self, stage: Optional[str] = None):
+    #     """Load and preprocess the data with correct subject distribution."""
+    #     try:
+    #         if self.verbose:
+    #             rprint(f"[yellow]Setting up data for fold {self.fold + 1}/{self.n_folds}...[/yellow]")
+            
+    #         # Load and preprocess data
+    #         data = self._load_aggregated_data()
+    #         if data is None or data.empty:
+    #             raise ValueError("Failed to load data or data is empty")
+                
+    #         data = self._preprocess_categorical(data)
+            
+    #         # Update column names for encoded labels
+    #         if 'Label' in self.column_names.values():
+    #             self.column_names = {k: v + '_encoded' if v == 'Label' else v 
+    #                             for k, v in self.column_names.items()}
+            
+    #         # Validate required columns exist
+    #         required_cols = [self.column_names[k] for k in ['id', 'segment', 'task', 'label']]
+    #         missing_cols = [col for col in required_cols if col not in data.columns]
+    #         if missing_cols:
+    #             raise ValueError(f"Missing required columns: {missing_cols}")
+            
+    #         # Define metadata and feature columns
+    #         metadata_cols = required_cols
+    #         self.feature_cols = [col for col in data.columns 
+    #                         if col not in metadata_cols 
+    #                         and col not in ['Id', 'Segment']
+    #                         and not col.endswith('_label')]
+            
+    #         if not self.feature_cols:
+    #             raise ValueError("No feature columns identified")
+            
+    #         # Use index columns but don't verify integrity to allow duplicates
+    #         data.set_index([self.column_names['id'], self.column_names['segment']], inplace=True)
+            
+    #         # Validate subjects count
+    #         unique_subjects = data.index.get_level_values(0).unique()
+    #         total_subjects = len(unique_subjects)
+    #         if total_subjects != 174:
+    #             raise ValueError(f"Expected 174 subjects, got {total_subjects}")
+            
+    #         # Calculate split sizes
+    #         test_size = int(self.test_size * total_subjects)
+    #         val_size = int(self.val_size * total_subjects)
+    #         train_size = total_subjects - (test_size + val_size)
+            
+    #         if train_size + val_size + test_size != total_subjects:
+    #             raise ValueError("Split sizes don't sum to total subjects")
+            
+    #         # Create deterministic splits
+    #         np.random.seed(self.seed)
+    #         shuffled_subjects = np.random.permutation(unique_subjects)
+            
+    #         if stage == "fit" or stage is None:
+    #             # Create and validate train/val splits
+    #             train_subjects = shuffled_subjects[:train_size]
+    #             val_subjects = shuffled_subjects[train_size:train_size + val_size]
+                
+    #             train_data = data[data.index.get_level_values(0).isin(train_subjects)]
+    #             val_data = data[data.index.get_level_values(0).isin(val_subjects)]
+                
+    #             # Compute class weights for training
+    #             class_counts = train_data[self.column_names['label']].value_counts().to_dict()
+    #             self.class_weights = {
+    #                 cls: len(train_data) / (2 * count)
+    #                 for cls, count in class_counts.items()
+    #             }
+                
+    #             if self.verbose:
+    #                 total = sum(class_counts.values())
+    #                 rprint("\n[blue]Class distribution at stroke level:[/blue]")
+    #                 for cls, count in class_counts.items():
+    #                     percentage = (count / total) * 100
+    #                     weight = self.class_weights[cls]
+    #                     rprint(f"Class {cls}: {count} samples ({percentage:.2f}%) - weight: {weight:.4f}")
+                
+    #             # Initialize datasets
+    #             self.train_dataset = self._create_dataset(
+    #                 data=train_data,
+    #                 is_train=True,
+    #                 scaler=None
+    #             )
+                
+    #             self.val_dataset = self._create_dataset(
+    #                 data=val_data,
+    #                 is_train=False,
+    #                 scaler=self.train_dataset.scaler
+    #             )
+            
+    #         if stage == "test" or stage is None:
+    #             # Create test split
+    #             test_subjects = shuffled_subjects[train_size + val_size:]
+    #             test_data = data[data.index.get_level_values(0).isin(test_subjects)]
+                
+    #             self.test_dataset = self._create_dataset(
+    #                 data=test_data,
+    #                 is_train=False,
+    #                 scaler=self.train_dataset.scaler if hasattr(self, 'train_dataset') else None
+    #             )
+            
+    #         # Verify split integrity
+    #         if stage is None:
+    #             train_ids = set(train_subjects)
+    #             val_ids = set(val_subjects)
+    #             test_ids = set(test_subjects)
+                
+    #             overlaps = [
+    #                 (train_ids & val_ids, "train and validation"),
+    #                 (train_ids & test_ids, "train and test"),
+    #                 (val_ids & test_ids, "validation and test")
+    #             ]
+                
+    #             for overlap, sets_name in overlaps:
+    #                 if overlap:
+    #                     raise ValueError(f"Overlap found between {sets_name} sets: {overlap}")
+                
+    #             if self.verbose:
+    #                 rprint(f"\n[green]Dataset split successful:[/green]")
+    #                 rprint(f"Train subjects: {len(train_ids)}")
+    #                 rprint(f"Val subjects: {len(val_ids)}")
+    #                 rprint(f"Test subjects: {len(test_ids)}")
+                    
+    #     except Exception as e:
+    #         rprint(f"[red]Error in setup: {str(e)}[/red]")
+    #         raise
 
     def _create_dataset(self, data: pd.DataFrame, is_train: bool, scaler: Optional[object] = None) -> HandwritingDataset:
         """Helper method to create and validate datasets."""
@@ -375,6 +501,13 @@ class HandwritingDataModule(pl.LightningDataModule):
             train=is_train,
             verbose=self.verbose
         )
+    
+    def set_class_weights(self, dataset):
+        if hasattr(dataset, 'class_weights'):
+            self.class_weights = torch.tensor([
+                dataset.class_weights[0],
+                dataset.class_weights[1]
+            ], device=self.device)
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -419,3 +552,36 @@ class HandwritingDataModule(pl.LightningDataModule):
     def get_num_tasks(self) -> int:
         """Get the number of unique tasks."""
         return self.num_tasks
+    
+    def _print_split_statistics(self, train_data, val_data, test_data=None):
+        """Print detailed statistics about the data splits"""
+        def get_stats(data):
+            n_subjects = len(data.index.get_level_values(0).unique())
+            n_windows = len(data)
+            n_pos = (data[self.column_names['label']] == 1).sum()
+            n_neg = (data[self.column_names['label']] == 0).sum()
+            return n_subjects, n_windows, n_pos, n_neg
+        
+        train_stats = get_stats(train_data)
+        val_stats = get_stats(val_data)
+        
+        rprint("\n[bold blue]Data Split Statistics:[/bold blue]")
+        rprint(f"\nTraining Set:")
+        rprint(f"Subjects: {train_stats[0]}")
+        rprint(f"Windows: {train_stats[1]}")
+        rprint(f"Positive samples: {train_stats[2]}")
+        rprint(f"Negative samples: {train_stats[3]}")
+        
+        rprint(f"\nValidation Set:")
+        rprint(f"Subjects: {val_stats[0]}")
+        rprint(f"Windows: {val_stats[1]}")
+        rprint(f"Positive samples: {val_stats[2]}")
+        rprint(f"Negative samples: {val_stats[3]}")
+        
+        if test_data is not None:
+            test_stats = get_stats(test_data)
+            rprint(f"\nTest Set:")
+            rprint(f"Subjects: {test_stats[0]}")
+            rprint(f"Windows: {test_stats[1]}")
+            rprint(f"Positive samples: {test_stats[2]}")
+            rprint(f"Negative samples: {test_stats[3]}")

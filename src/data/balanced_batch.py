@@ -29,6 +29,11 @@ class BalancedBatchSampler(Sampler):
         self.num_batches = len(self.dataset) // self.batch_size
         
     def __iter__(self):
+        temperature = 0.5
+        probs = np.array([len(indices) for indices in self.label_to_indices.values()])
+        probs = probs ** temperature
+        probs = probs / probs.sum()
+        
         # Create a copy of indices for each class
         indices_by_class = {
             label: indices.copy() 
@@ -38,8 +43,8 @@ class BalancedBatchSampler(Sampler):
         # Calculate samples per class per batch to maintain distribution
         total_samples = sum(self.count_per_class.values())
         samples_per_class = {
-            label: max(1, int(self.batch_size * count / total_samples))
-            for label, count in self.count_per_class.items()
+            label: max(1, int(self.batch_size * prob))
+            for label, prob in zip(self.label_to_indices.keys(), probs)
         }
         
         # Generate batches
