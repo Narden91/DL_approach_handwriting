@@ -51,7 +51,7 @@ training:
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "xlstm"  # Options: "rnn" or "lstm" or "gru" or "xlstm"
+  type: "rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm"
   hidden_size: 256 # 128
   num_layers: 2 # 2
   dropout: 0.3 #0.2
@@ -59,7 +59,7 @@ model:
   lstm_specific:
     layer_norm: true
   rnn_specific:
-    nonlinearity: "relu"
+    nonlinearity: "tanh"
   gru_specific:
     batch_first: true
     bias: true

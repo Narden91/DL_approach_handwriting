@@ -55,7 +55,7 @@ class RNN(BaseModel):
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
-            nonlinearity='relu',
+            nonlinearity=nonlinearity,
             batch_first=True,
             dropout=dropout,
             bidirectional=True
