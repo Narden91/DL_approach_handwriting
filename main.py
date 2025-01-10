@@ -35,6 +35,40 @@ def set_global_seed(seed: int) -> None:
     pl.seed_everything(seed)
 
 
+def save_importance_data(s3_handler, importance_data, file_key_save, importance_type="feature"):
+    """
+    Save importance data to CSV via S3 using pre-defined file paths
+    
+    Args:
+        s3_handler: S3IOHandler instance
+        importance_data: Dictionary containing importance values
+        file_key_save: Complete S3 file path for saving
+        importance_type: Type of importance data ("feature" or "task")
+    """
+    try:
+        # Create DataFrame from importance dictionary
+        if importance_type == "feature":
+            df = pd.DataFrame({
+                'feature': list(importance_data.keys()),
+                'importance': list(importance_data.values())
+            })
+        else:  # task importance
+            df = pd.DataFrame({
+                'task_id': list(importance_data.keys()),
+                'importance': list(importance_data.values())
+            })
+        
+        # Sort by importance value descending
+        df = df.sort_values('importance', ascending=False)
+        
+        # Save to S3
+        s3_handler.save_data(df, file_key_save)
+        rprint(f"[green]Successfully saved {importance_type} importance results to {file_key_save}[/green]")
+        
+    except Exception as e:
+        rprint(f"[red]Error saving {importance_type} importance data: {str(e)}[/red]")
+        
+
 def configure_training(config):
     """Configure training with wandb logger and callbacks."""
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -108,8 +142,12 @@ def main(cfg: DictConfig) -> None:
         check_cuda_availability(cfg.verbose)
 
         file_key_load: str = f"{cfg.data.s3_folder_input}/{cfg.data.data_filename}"
-        output_filename: str = f"{cfg.data.output_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        file_key_save: str = f"{cfg.data.s3_folder_output}/{output_filename}"
+        result_output_filename: str = f"{cfg.data.output_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        feature_output_filename: str = f"Feature_importance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        task_output_filename: str = f"Task_importance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        file_key_save: str = f"{cfg.data.s3_folder_output}/{result_output_filename}"
+        feature_key_save: str = f"{cfg.data.s3_folder_output}/{feature_output_filename}"
+        task_key_save: str = f"{cfg.data.s3_folder_output}/{task_output_filename}"
         s3_handler: S3IOHandler = S3IOHandler(config, verbose=cfg.verbose)
 
         # Metrics for each fold
@@ -252,20 +290,24 @@ def main(cfg: DictConfig) -> None:
                 avg_feature_importance = GradientModelExplainer.aggregate_importances(feature_importance_folds)
                 avg_task_importance = GradientModelExplainer.aggregate_importances(task_importance_folds)
 
-                # if cfg.verbose:
+                # Save importance data
+                save_importance_data(s3_handler, avg_feature_importance, feature_key_save, "feature")
+                save_importance_data(s3_handler, avg_task_importance, task_key_save, "task")
+                
                 rprint("\n[bold blue]Average Feature Importance:[/bold blue]")
                 for feature, importance in sorted(avg_feature_importance.items(),
-                                                    key=lambda x: x[1], reverse=True):
+                                                key=lambda x: x[1], reverse=True):
                     rprint(f"{feature}: {importance:.4f}")
-
+                    
                 rprint("\n[bold blue]Average Task Importance:[/bold blue]")
                 for task, importance in sorted(avg_task_importance.items(),
-                                                key=lambda x: x[1], reverse=True):
+                                            key=lambda x: x[1], reverse=True):
                     rprint(f"Task {task}: {importance:.4f}")
-
-                # Plot aggregated results
-                explainer.plot_feature_importance(avg_feature_importance, title="Average Feature Importance", top_n=15)
-                explainer.plot_task_importance(avg_task_importance, "Average Task Importance")
+                
+                if cfg.verbose:
+                    # Plot aggregated results
+                    explainer.plot_feature_importance(avg_feature_importance, title="Average Feature Importance", top_n=15)
+                    explainer.plot_task_importance(avg_task_importance, "Average Task Importance")
 
     except Exception as e:
         rprint(f"[red]Error in main function: {str(e)}[/red]")
