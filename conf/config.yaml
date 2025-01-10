@@ -44,7 +44,7 @@ training:
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "attention_rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn"
+  type: "rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32

@@ -1,9 +1,6 @@
 from typing import Dict
 import os
 from dotenv import load_dotenv
-import sys 
-
-sys.dont_write_bytecode = True
 
 
 class ConfigHandler:

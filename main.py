@@ -1,6 +1,5 @@
 from datetime import datetime
 import sys
-
 sys.dont_write_bytecode = True
 import pandas as pd
 import hydra
@@ -19,8 +18,10 @@ from src.utils.callbacks import GradientMonitorCallback, ThresholdTuner
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
 from src.utils.config_operations import ConfigOperations
-from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_subject_metrics, process_metrics
+from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_subject_metrics, \
+    process_metrics
 from src.utils.majority_vote import get_predictions, compute_subject_metrics
+from src.explainability.model_explainer import GradientModelExplainer
 
 
 def set_global_seed(seed: int) -> None:
@@ -38,22 +39,22 @@ def configure_training(config):
     """Configure training with wandb logger and callbacks."""
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    
+
     # Initialize callbacks
     progress_bar = pl.callbacks.progress.TQDMProgressBar(
         refresh_rate=1,
         process_position=0,
     )
-    
+
     early_stopping = EarlyStopping(
         monitor="val_f1",
         patience=config.training.early_stopping_patience,
         mode="max",
         verbose=True
     )
-    
+
     threshold_tuner = ThresholdTuner()
-    
+
     try:
         # Initialize Wandb logger with error handling
         wandb_logger = WandbLogger(
@@ -63,7 +64,7 @@ def configure_training(config):
     except Exception as e:
         rprint(f"[yellow]Warning: Could not initialize WandB logger: {str(e)}. Continuing without logging...[/yellow]")
         wandb_logger = None
-    
+
     trainer_config = {
         "accelerator": "gpu",
         "devices": 1,
@@ -81,7 +82,7 @@ def configure_training(config):
         "enable_checkpointing": False,
         "deterministic": True
     }
-    
+
     return trainer_config, wandb_logger
 
 
@@ -94,26 +95,30 @@ def safe_wandb_log(logger, metrics, epoch=None):
             logger.log_metrics(metrics)
         except Exception as e:
             rprint(f"[yellow]Warning: Failed to log metrics to WandB: {str(e)}[/yellow]")
-            
+
 
 @hydra.main(version_base="1.1", config_path="./conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     """Main training function."""
     try:
         cfg = ConfigOperations.merge_configurations(cfg)
-                        
+
         set_global_seed(cfg.seed)
         rprint("[bold blue]Starting Handwriting Analysis with 5-Fold Cross Validation[/bold blue]")
         check_cuda_availability(cfg.verbose)
-        
+
         file_key_load: str = f"{cfg.data.s3_folder_input}/{cfg.data.data_filename}"
         output_filename: str = f"{cfg.data.output_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         file_key_save: str = f"{cfg.data.s3_folder_output}/{output_filename}"
         s3_handler: S3IOHandler = S3IOHandler(config, verbose=cfg.verbose)
-        
+
         # Metrics for each fold
         fold_metrics = []
-        
+
+        # Feature importance and task importance for each fold
+        feature_importance_folds = []
+        task_importance_folds = []
+
         for window_size in cfg.data.window_sizes:
             for stride in cfg.data.strides:
                 rprint(f"\n[bold cyan]====== Testing window_size={window_size}, stride={stride} ======[/bold cyan]")
@@ -121,7 +126,7 @@ def main(cfg: DictConfig) -> None:
                     rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
                     try:
                         fold_seed = cfg.seed + fold
-                        
+
                         data_module = HandwritingDataModule(
                             s3_handler=s3_handler,
                             file_key=file_key_load,
@@ -141,7 +146,7 @@ def main(cfg: DictConfig) -> None:
                         )
 
                         data_module.setup()
-                        
+
                         if cfg.verbose:
                             print_feature_info(data_module)
                             print_dataset_info(data_module)
@@ -161,14 +166,47 @@ def main(cfg: DictConfig) -> None:
                         trainer = pl.Trainer(**trainer_config)
                         trainer.fit(model, data_module)
                         
+                        # Initialize explainer using the trained model
+                        explainer = GradientModelExplainer(
+                            model=model,
+                            datamodule=data_module,
+                            feature_names=data_module.feature_cols,
+                            verbose=cfg.verbose,
+                            n_samples=100,
+                            batch_size=cfg.data.batch_size
+                        )
+
+                        # Calculate feature and task importance
+                        feature_importance = explainer.analyze_feature_importance(fold)
+                        task_importance = explainer.analyze_task_importance(fold)
+
+                        # Store results
+                        feature_importance_folds.append(feature_importance)
+                        task_importance_folds.append(task_importance)
+
+                        # Optionally plot individual fold results
+                        if cfg.verbose:
+                            explainer.plot_feature_importance(
+                                feature_importance,
+                                f"Feature Importance - Fold {fold + 1}"
+                            )
+                            explainer.plot_task_importance(
+                                task_importance,
+                                f"Task Importance - Fold {fold + 1}"
+                            )
+
                         # Get window-level predictions
-                        train_subjects, train_labels, train_preds = get_predictions(trainer, model, data_module.train_dataloader())
-                        test_subjects, test_labels, test_preds = get_predictions(trainer, model, data_module.test_dataloader())
-                        
+                        train_subjects, train_labels, train_preds = get_predictions(trainer, model,
+                                                                                    data_module.train_dataloader())
+                        test_subjects, test_labels, test_preds = get_predictions(trainer, model,
+                                                                                 data_module.test_dataloader())
+
                         # Compute subject-level metrics
-                        train_subject_metrics = compute_subject_metrics(train_subjects, train_labels, train_preds, cfg.verbose)
-                        test_subject_metrics = compute_subject_metrics(test_subjects, test_labels, test_preds, cfg.verbose)
-                        
+                        train_subject_metrics = compute_subject_metrics(train_subjects, train_labels, train_preds,
+                                                                        cfg.verbose)
+                        test_subject_metrics = compute_subject_metrics(test_subjects, test_labels, test_preds,
+                                                                       cfg.verbose)
+
                         # Store metrics for this fold
                         metrics = {
                             'window_size': window_size,
@@ -187,22 +225,19 @@ def main(cfg: DictConfig) -> None:
                             'test_subject_f1': test_subject_metrics['subject_f1'],
                             'test_subject_mcc': test_subject_metrics['subject_mcc'],
                         }
-                        
+
                         # Safely log metrics to wandb
                         safe_wandb_log(wandb_logger, metrics, trainer.current_epoch)
-                        
+
                         fold_metrics.append(metrics)
                         print_subject_metrics(train_subject_metrics, test_subject_metrics, fold, cfg.verbose)
                     except Exception as e:
                         rprint(f"[red]Error in fold {fold + 1}: {str(e)}[/red]")
-                        if cfg.test_mode:
-                            return
-                        else:
-                            continue
-                        
+                        return e
+
                     if cfg.test_mode and fold == 0:
                         break
-        
+
         if fold_metrics:
             metrics_df = pd.DataFrame(fold_metrics)
             process_metrics(metrics_df, window_size, stride, cfg)
@@ -211,7 +246,27 @@ def main(cfg: DictConfig) -> None:
                 rprint(f"[green]Successfully saved results to S3[/green]")
             except Exception as e:
                 rprint(f"[red]Error saving results to S3: {str(e)}[/red]")
-        
+
+            # After all folds, aggregate and plot overall results
+            if feature_importance_folds:
+                avg_feature_importance = GradientModelExplainer.aggregate_importances(feature_importance_folds)
+                avg_task_importance = GradientModelExplainer.aggregate_importances(task_importance_folds)
+
+                # if cfg.verbose:
+                rprint("\n[bold blue]Average Feature Importance:[/bold blue]")
+                for feature, importance in sorted(avg_feature_importance.items(),
+                                                    key=lambda x: x[1], reverse=True):
+                    rprint(f"{feature}: {importance:.4f}")
+
+                rprint("\n[bold blue]Average Task Importance:[/bold blue]")
+                for task, importance in sorted(avg_task_importance.items(),
+                                                key=lambda x: x[1], reverse=True):
+                    rprint(f"Task {task}: {importance:.4f}")
+
+                # Plot aggregated results
+                explainer.plot_feature_importance(avg_feature_importance, title="Average Feature Importance", top_n=15)
+                explainer.plot_task_importance(avg_task_importance, "Average Task Importance")
+
     except Exception as e:
         rprint(f"[red]Error in main function: {str(e)}[/red]")
         raise e
