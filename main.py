@@ -135,12 +135,13 @@ def safe_wandb_log(logger, metrics, epoch=None):
 def main(cfg: DictConfig) -> None:
     """Main training function."""
     try:
+        # Initialize configuration and set seeds
         cfg = ConfigOperations.merge_configurations(cfg)
-
         set_global_seed(cfg.seed)
         rprint("[bold blue]Starting Handwriting Analysis with 5-Fold Cross Validation[/bold blue]")
         check_cuda_availability(cfg.verbose)
 
+        # Setup file paths
         file_key_load: str = f"{cfg.data.s3_folder_input}/{cfg.data.data_filename}"
         result_output_filename: str = f"{cfg.data.output_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         feature_output_filename: str = f"Feature_importance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -148,23 +149,32 @@ def main(cfg: DictConfig) -> None:
         file_key_save: str = f"{cfg.data.s3_folder_output}/{result_output_filename}"
         feature_key_save: str = f"{cfg.data.s3_folder_output}/{feature_output_filename}"
         task_key_save: str = f"{cfg.data.s3_folder_output}/{task_output_filename}"
+        
+        # Initialize S3 handler
         s3_handler: S3IOHandler = S3IOHandler(config, verbose=cfg.verbose)
 
-        # Metrics for each fold
+        # Initialize metrics lists
         fold_metrics = []
+        feature_importance_all = []
+        task_importance_all = []
 
-        # Feature importance and task importance for each fold
-        feature_importance_folds = []
-        task_importance_folds = []
-
+        # Main loop over window sizes and strides
         for window_size in cfg.data.window_sizes:
             for stride in cfg.data.strides:
+                # Initialize lists for this window/stride configuration
+                feature_importance_folds = []
+                task_importance_folds = []
+                
                 rprint(f"\n[bold cyan]====== Testing window_size={window_size}, stride={stride} ======[/bold cyan]")
+                
+                # Fold loop
                 for fold in range(cfg.num_folds):
                     rprint(f"\n[bold cyan]====== Starting Fold {fold + 1}/5 ======[/bold cyan]")
                     try:
+                        # Set fold-specific seed
                         fold_seed = cfg.seed + fold
 
+                        # Initialize data module
                         data_module = HandwritingDataModule(
                             s3_handler=s3_handler,
                             file_key=file_key_load,
@@ -183,12 +193,15 @@ def main(cfg: DictConfig) -> None:
                             verbose=cfg.verbose
                         )
 
+                        # Setup data
                         data_module.setup()
 
+                        # Print info if verbose
                         if cfg.verbose:
                             print_feature_info(data_module)
                             print_dataset_info(data_module)
 
+                        # Create and configure model
                         model = ModelFactory.create_model(cfg, data_module, window_size=window_size)
                         model.model_config = {
                             'learning_rate': cfg.training.learning_rate,
@@ -199,12 +212,12 @@ def main(cfg: DictConfig) -> None:
                         if hasattr(data_module.train_dataset, 'class_weights'):
                             model.set_class_weights(data_module.train_dataset)
 
-                        # Configure training and fit the model
+                        # Configure training and fit model
                         trainer_config, wandb_logger = configure_training(cfg)
                         trainer = pl.Trainer(**trainer_config)
                         trainer.fit(model, data_module)
                         
-                        # Initialize explainer using the trained model
+                        # Initialize explainer
                         explainer = GradientModelExplainer(
                             model=model,
                             datamodule=data_module,
@@ -218,32 +231,25 @@ def main(cfg: DictConfig) -> None:
                         feature_importance = explainer.analyze_feature_importance(fold)
                         task_importance = explainer.analyze_task_importance(fold)
 
-                        # Store results
+                        # Store importance dictionaries for aggregation
                         feature_importance_folds.append(feature_importance)
                         task_importance_folds.append(task_importance)
 
-                        # Optionally plot individual fold results
-                        if cfg.verbose:
-                            explainer.plot_feature_importance(
-                                feature_importance,
-                                f"Feature Importance - Fold {fold + 1}"
-                            )
-                            explainer.plot_task_importance(
-                                task_importance,
-                                f"Task Importance - Fold {fold + 1}"
-                            )
+                        # Get predictions
+                        train_subjects, train_labels, train_preds = get_predictions(
+                            trainer, model, data_module.train_dataloader()
+                        )
+                        test_subjects, test_labels, test_preds = get_predictions(
+                            trainer, model, data_module.test_dataloader()
+                        )
 
-                        # Get window-level predictions
-                        train_subjects, train_labels, train_preds = get_predictions(trainer, model,
-                                                                                    data_module.train_dataloader())
-                        test_subjects, test_labels, test_preds = get_predictions(trainer, model,
-                                                                                 data_module.test_dataloader())
-
-                        # Compute subject-level metrics
-                        train_subject_metrics = compute_subject_metrics(train_subjects, train_labels, train_preds,
-                                                                        cfg.verbose)
-                        test_subject_metrics = compute_subject_metrics(test_subjects, test_labels, test_preds,
-                                                                       cfg.verbose)
+                        # Compute metrics
+                        train_subject_metrics = compute_subject_metrics(
+                            train_subjects, train_labels, train_preds, cfg.verbose
+                        )
+                        test_subject_metrics = compute_subject_metrics(
+                            test_subjects, test_labels, test_preds, cfg.verbose
+                        )
 
                         # Store metrics for this fold
                         metrics = {
@@ -264,50 +270,90 @@ def main(cfg: DictConfig) -> None:
                             'test_subject_mcc': test_subject_metrics['subject_mcc'],
                         }
 
-                        # Safely log metrics to wandb
+                        # Log metrics to wandb
                         safe_wandb_log(wandb_logger, metrics, trainer.current_epoch)
 
+                        # Store metrics
                         fold_metrics.append(metrics)
                         print_subject_metrics(train_subject_metrics, test_subject_metrics, fold, cfg.verbose)
+
+                        if cfg.test_mode and fold == 0:
+                            break
+
                     except Exception as e:
                         rprint(f"[red]Error in fold {fold + 1}: {str(e)}[/red]")
                         return e
 
-                    if cfg.test_mode and fold == 0:
-                        break
-
-        if fold_metrics:
-            metrics_df = pd.DataFrame(fold_metrics)
-            process_metrics(metrics_df, window_size, stride, cfg)
-            try:
-                s3_handler.save_data(metrics_df, file_key_save)
-                rprint(f"[green]Successfully saved results to S3[/green]")
-            except Exception as e:
-                rprint(f"[red]Error saving results to S3: {str(e)}[/red]")
-
-            # After all folds, aggregate and plot overall results
-            if feature_importance_folds:
+                # After all folds for this configuration, aggregate the importance results
                 avg_feature_importance = GradientModelExplainer.aggregate_importances(feature_importance_folds)
                 avg_task_importance = GradientModelExplainer.aggregate_importances(task_importance_folds)
 
-                # Save importance data
-                save_importance_data(s3_handler, avg_feature_importance, feature_key_save, "feature")
-                save_importance_data(s3_handler, avg_task_importance, task_key_save, "task")
-                
-                rprint("\n[bold blue]Average Feature Importance:[/bold blue]")
-                for feature, importance in sorted(avg_feature_importance.items(),
-                                                key=lambda x: x[1], reverse=True):
-                    rprint(f"{feature}: {importance:.4f}")
-                    
-                rprint("\n[bold blue]Average Task Importance:[/bold blue]")
-                for task, importance in sorted(avg_task_importance.items(),
-                                            key=lambda x: x[1], reverse=True):
-                    rprint(f"Task {task}: {importance:.4f}")
-                
+                # Store aggregated results with configuration metadata
+                for feature, importance in avg_feature_importance.items():
+                    feature_importance_all.append({
+                        'window_size': window_size,
+                        'stride': stride,
+                        'feature': feature,
+                        'importance': importance
+                    })
+
+                for task_id, importance in avg_task_importance.items():
+                    task_importance_all.append({
+                        'window_size': window_size,
+                        'stride': stride,
+                        'task_id': task_id,
+                        'importance': importance
+                    })
+
+        # After all configurations, save results
+        if fold_metrics:
+            # Save metrics
+            metrics_df = pd.DataFrame(fold_metrics)
+            process_metrics(metrics_df, window_size, stride, cfg)
+            
+            try:
+                # Save regular metrics
+                s3_handler.save_data(metrics_df, file_key_save)
+                rprint(f"[green]Successfully saved metrics to {file_key_save}[/green]")
+
+                # Save feature importance
+                if feature_importance_all:
+                    feature_importance_df = pd.DataFrame(feature_importance_all)
+                    s3_handler.save_data(feature_importance_df, feature_key_save)
+                    rprint(f"[green]Successfully saved feature importance to {feature_key_save}[/green]")
+
+                # Save task importance
+                if task_importance_all:
+                    task_importance_df = pd.DataFrame(task_importance_all)
+                    s3_handler.save_data(task_importance_df, task_key_save)
+                    rprint(f"[green]Successfully saved task importance to {task_key_save}[/green]")
+
+                # Print results if verbose
                 if cfg.verbose:
-                    # Plot aggregated results
-                    explainer.plot_feature_importance(avg_feature_importance, title="Average Feature Importance", top_n=15)
-                    explainer.plot_task_importance(avg_task_importance, "Average Task Importance")
+                    # Print feature importance for each configuration
+                    for ws in cfg.data.window_sizes:
+                        for st in cfg.data.strides:
+                            config_features = [
+                                row for row in feature_importance_all 
+                                if row['window_size'] == ws and row['stride'] == st
+                            ]
+                            if config_features:
+                                rprint(f"\n[bold blue]Feature Importance for window_size={ws}, stride={st}:[/bold blue]")
+                                for row in sorted(config_features, key=lambda x: x['importance'], reverse=True):
+                                    rprint(f"{row['feature']}: {row['importance']:.4f}")
+
+                            # Print task importance for each configuration
+                            config_tasks = [
+                                row for row in task_importance_all 
+                                if row['window_size'] == ws and row['stride'] == st
+                            ]
+                            if config_tasks:
+                                rprint(f"\n[bold blue]Task Importance for window_size={ws}, stride={st}:[/bold blue]")
+                                for row in sorted(config_tasks, key=lambda x: x['importance'], reverse=True):
+                                    rprint(f"Task {row['task_id']}: {row['importance']:.4f}")
+
+            except Exception as e:
+                rprint(f"[red]Error saving results to S3: {str(e)}[/red]")
 
     except Exception as e:
         rprint(f"[red]Error in main function: {str(e)}[/red]")
