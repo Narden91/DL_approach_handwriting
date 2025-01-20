@@ -10,7 +10,7 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: false
+test_mode: true
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
@@ -36,7 +36,7 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 200
+  max_epochs: 1
   learning_rate: 0.0001
   weight_decay: 0.0001
   early_stopping_patience: 30
@@ -44,7 +44,7 @@ training:
   # checkpoint_dir: "checkpoints"
 
 model:
-  type: "simpleRNN"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn"
+  type: "han"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32
@@ -64,6 +64,12 @@ model:
     recurrent_dropout: 0.1
   attention_specific:
     n_heads: 4
+  han_specific:
+    attention_dim: 64
+    num_heads: 4  # For multi-head attention if needed
+    use_layer_norm: true
+    feature_dropout: 0.1
+    attention_dropout: 0.1
   
 gpu_settings:
   gpu_id: 0  # Specify which GPU to use
