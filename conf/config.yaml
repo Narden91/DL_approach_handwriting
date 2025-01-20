@@ -73,6 +73,7 @@ model:
   lnn_specific:
     num_cells: 3
     dt: 0.1
+    complexity_lambda: 0.01
   
 gpu_settings:
   gpu_id: 0  # Specify which GPU to use
