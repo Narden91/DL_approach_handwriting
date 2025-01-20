@@ -8,7 +8,7 @@ from src.models.GRU import GRU
 from src.models.attention_RNN import AttentionRNN
 from src.models.simpleRNN import SimpleRNN
 from src.models.han import HANModel
-
+from src.models.liquid_neural_net import LiquidNeuralNetwork
 
 class ModelFactory:
     """Factory class for creating model instances based on configuration."""
@@ -50,7 +50,20 @@ class ModelFactory:
             rprint(f"\n[bold blue]Creating model of type: {model_type}[/bold blue]")
         
         try:
-            if model_type == "han":
+            if model_type == "lnn":
+                return LiquidNeuralNetwork(
+                    input_size=data_module.get_feature_dim(),
+                    hidden_size=cfg.model.hidden_size,
+                    num_layers=cfg.model.num_layers,
+                    num_cells=cfg.model.lnn_specific.num_cells,
+                    task_embedding_dim=cfg.model.task_embedding_dim,
+                    num_tasks=cfg.data.num_tasks,
+                    dropout=cfg.model.dropout,
+                    dt=cfg.model.lnn_specific.dt,
+                    verbose=cfg.verbose
+                )
+            
+            elif model_type == "han":
                 # Split features into static and dynamic
                 static_features, dynamic_features = ModelFactory._get_feature_split(
                     data_module.feature_cols
@@ -73,6 +86,7 @@ class ModelFactory:
                     dropout=cfg.model.dropout,
                     verbose=cfg.verbose
                 )
+                
             elif model_type == "lstm":
                 return LSTM(
                     input_size=data_module.get_feature_dim(),
@@ -199,6 +213,10 @@ class ModelFactory:
             },
             'han': {
                 'attention_dim': 64,
+            },
+            'lnn': {
+                'num_cells': 3,
+                'dt': 0.1,
             }
         }
         
