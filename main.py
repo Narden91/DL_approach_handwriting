@@ -143,9 +143,9 @@ def main(cfg: DictConfig) -> None:
 
         # Setup file paths
         file_key_load: str = f"{cfg.data.s3_folder_input}/{cfg.data.data_filename}"
-        result_output_filename: str = f"{cfg.data.output_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        feature_output_filename: str = f"Feature_importance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        task_output_filename: str = f"Task_importance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        result_output_filename: str = f"{cfg.data.output_filename}_{cfg.model.type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        feature_output_filename: str = f"Feature_importance_{cfg.model.type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        task_output_filename: str = f"Task_importance_{cfg.model.type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         file_key_save: str = f"{cfg.data.s3_folder_output}/{result_output_filename}"
         feature_key_save: str = f"{cfg.data.s3_folder_output}/{feature_output_filename}"
         task_key_save: str = f"{cfg.data.s3_folder_output}/{task_output_filename}"
