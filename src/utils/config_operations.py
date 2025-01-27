@@ -32,6 +32,7 @@ class ConfigOperations:
             "data.window_sizes": convert_value("WINDOW_SIZES", os.getenv("WINDOW_SIZES")),
             "data.strides": convert_value("STRIDES", os.getenv("STRIDES")),
             "data.batch_size": convert_value("BATCH_SIZE", os.getenv("BATCH_SIZE")),
+            "data.yaml_split_path": os.getenv("YAML_SPLIT_PATH"), 
             "model.type": os.getenv("MODEL_TYPE"),
             "training.max_epochs": convert_value("MAX_EPOCHS", os.getenv("MAX_EPOCHS")),
             "training.learning_rate": convert_value("LEARNING_RATE", os.getenv("LEARNING_RATE")),

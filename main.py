@@ -1,6 +1,7 @@
 from datetime import datetime
 import sys
 sys.dont_write_bytecode = True
+from src.utils.wandb_utils import cleanup_wandb
 import pandas as pd
 import hydra
 from omegaconf import DictConfig
@@ -13,7 +14,7 @@ import random
 import numpy as np
 from pytorch_lightning.loggers import WandbLogger
 from src.utils.model_factory import ModelFactory
-from src.data.datamodule import HandwritingDataModule
+from src.data.datamodule import DataConfig, HandwritingDataModule
 from src.utils.callbacks import GradientMonitorCallback, ThresholdTuner
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
@@ -174,23 +175,26 @@ def main(cfg: DictConfig) -> None:
                         # Set fold-specific seed
                         fold_seed = cfg.seed + fold
 
-                        # Initialize data module
+                        # Before creating the HandwritingDataModule, create a DataConfig instance
+                        data_config = DataConfig(
+                            window_size=window_size,
+                            stride=stride,
+                            batch_size=cfg.data.batch_size,
+                            num_workers=cfg.data.num_workers,
+                            scaler_type=cfg.data.scaler,
+                            verbose=cfg.verbose
+                        )
+
+                        # Now create the DataModule with the config object
                         data_module = HandwritingDataModule(
                             s3_handler=s3_handler,
                             file_key=file_key_load,
-                            batch_size=cfg.data.batch_size,
-                            window_size=window_size,
-                            stride=stride,
-                            num_workers=cfg.data.num_workers,
-                            num_tasks=cfg.data.num_tasks,
-                            val_size=cfg.data.val_size,
-                            test_size=cfg.data.test_size,
+                            config=data_config,  # Pass the config object instead of individual parameters
                             column_names=dict(cfg.data.columns),
                             fold=fold,
                             n_folds=cfg.num_folds,
-                            scaler_type=cfg.data.scaler,
                             seed=fold_seed,
-                            verbose=cfg.verbose
+                            yaml_split_path=cfg.data.get('yaml_split_path', None)
                         )
 
                         # Setup data
@@ -202,7 +206,7 @@ def main(cfg: DictConfig) -> None:
                             print_dataset_info(data_module)
 
                         # Create and configure model
-                        model = ModelFactory.create_model(cfg, data_module, window_size=window_size)
+                        model = ModelFactory.create_model(cfg, data_module)
                         model.model_config = {
                             'learning_rate': cfg.training.learning_rate,
                             'weight_decay': cfg.training.weight_decay
@@ -277,6 +281,8 @@ def main(cfg: DictConfig) -> None:
                         fold_metrics.append(metrics)
                         print_subject_metrics(train_subject_metrics, test_subject_metrics, fold, cfg.verbose)
 
+                        cleanup_wandb()
+                        
                         if cfg.test_mode and fold == 0:
                             break
 
@@ -355,7 +361,11 @@ def main(cfg: DictConfig) -> None:
             except Exception as e:
                 rprint(f"[red]Error saving results to S3: {str(e)}[/red]")
 
+        cleanup_wandb()
+        rprint("[bold green]Handwriting Analysis completed successfully![/bold green]")
+        
     except Exception as e:
+        cleanup_wandb()
         rprint(f"[red]Error in main function: {str(e)}[/red]")
         raise e
 

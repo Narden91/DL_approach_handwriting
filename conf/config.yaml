@@ -10,12 +10,13 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: true
+test_mode: false
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
 data:
   data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
+  yaml_split_path: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\conf\\split_config.yaml"
   s3_folder_input: "raw-data"
   data_filename: "aggregated_data.csv"
   s3_folder_output: "results"
@@ -41,10 +42,9 @@ training:
   weight_decay: 0.0001
   early_stopping_patience: 30
   gradient_clip_val: 0.4
-  # checkpoint_dir: "checkpoints"
 
 model:
-  type: "lnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
+  type: "han"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32
