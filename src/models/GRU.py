@@ -9,6 +9,7 @@ from src.models.base import BaseModel
 from src.models.RNN import RNNDebugger
 
 
+
 class GRU(BaseModel):
     def __init__(
         self, 

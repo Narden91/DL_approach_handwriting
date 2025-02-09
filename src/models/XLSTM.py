@@ -8,6 +8,27 @@ from rich import print as rprint
 from src.models.base import BaseModel
 from src.models.RNN import RNNDebugger
 
+
+class HighwayLayer(nn.Module):
+    """Highway Connection Layer for LSTMs."""
+    def __init__(self, size):
+        super().__init__()
+        self.transform_gate = nn.Linear(size, size)
+        self.carry_gate = nn.Linear(size, size)
+        self.init_weights()
+
+    def init_weights(self):
+        nn.init.xavier_uniform_(self.transform_gate.weight)
+        nn.init.xavier_uniform_(self.carry_gate.weight)
+        nn.init.zeros_(self.transform_gate.bias)
+        nn.init.ones_(self.carry_gate.bias)
+
+    def forward(self, x, h):
+        transform = torch.sigmoid(self.transform_gate(h))
+        carry = torch.sigmoid(self.carry_gate(h))
+        return transform * x + carry * h
+    
+
 class XLSTM(BaseModel):
     def __init__(
         self, 
@@ -27,6 +48,8 @@ class XLSTM(BaseModel):
         self.save_hyperparameters()
         self.verbose = verbose
         self.debugger = RNNDebugger()
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
         
         # Feature normalization layers
         self.feature_norm = nn.LayerNorm(input_size)
@@ -48,6 +71,9 @@ class XLSTM(BaseModel):
             dropout=dropout if num_layers > 1 else 0,
             bidirectional=True
         )
+        
+        # Highway layers for improved information flow
+        self.highway = HighwayLayer(hidden_size * 2)
         
         # Output size considering bidirectional
         output_size = hidden_size * 2
@@ -71,6 +97,29 @@ class XLSTM(BaseModel):
             rprint(f"Embedding Dropout: {embedding_dropout}")
             rprint(f"Recurrent Dropout: {recurrent_dropout}")
             rprint(f"Layer Norm: {layer_norm}")
+        
+        # # Output size considering bidirectional
+        # output_size = hidden_size * 2
+        
+        # # Classifier with layer normalization
+        # self.classifier = nn.Sequential(
+        #     nn.LayerNorm(output_size),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(output_size, 1)
+        # )
+        
+        # self._init_weights()
+        
+        # if verbose:
+        #     rprint(f"\n[bold blue]XLSTM Model Configuration:[/bold blue]")
+        #     rprint(f"Input Size: {input_size}")
+        #     rprint(f"Hidden Size: {hidden_size}")
+        #     rprint(f"Number of Layers: {num_layers}")
+        #     rprint(f"Task Embedding Dim: {task_embedding_dim}")
+        #     rprint(f"Dropout: {dropout}")
+        #     rprint(f"Embedding Dropout: {embedding_dropout}")
+        #     rprint(f"Recurrent Dropout: {recurrent_dropout}")
+        #     rprint(f"Layer Norm: {layer_norm}")
 
     def _init_weights(self):
         """Initialize weights with appropriate initialization schemes"""
@@ -144,14 +193,55 @@ class XLSTM(BaseModel):
         if masks is not None:
             x = x * masks.unsqueeze(-1)
         
-        # LSTM forward pass
-        output, _ = self.lstm(x)
+        output, (h_n, _) = self.lstm(x)
+
+        # Fixing shape mismatch in Highway Connection
+        h_n = h_n.view(self.num_layers, 2, batch_size, self.hidden_size)
+        h_n = torch.cat((h_n[-1, 0], h_n[-1, 1]), dim=-1)  # Concatenating both directions
+
+        # Apply Highway Connection
+        output = self.highway(output[:, -1, :], h_n) # Ensuring correct shape
+        output = output.view(batch_size, -1)  # Flatten for classifier
+        return self.classifier(output)
+
+    
+        # batch_size, seq_len, _ = x.size()
         
-        if self.verbose:
-            self.debugger.check_tensor(output, "LSTM output", "Forward")
+        # # Initial preprocessing
+        # x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
+        # x = torch.clamp(x, -10, 10)
         
-        # Use final output for classification
-        return self.classifier(output[:, -1, :])
+        # if self.verbose:
+        #     self.debugger.check_tensor(x, "Initial input", "Forward")
+        
+        # # Apply normalization
+        # x = self.input_norm(x.transpose(1, 2)).transpose(1, 2)
+        # x = self.feature_norm(x)
+        
+        # # Process task embeddings
+        # task_ids = task_ids.squeeze(-1)
+        # task_emb = self.task_embedding(task_ids)
+        # task_emb = self.embedding_dropout(task_emb)
+        # task_emb = task_emb.unsqueeze(1).expand(-1, seq_len, -1)
+        
+        # # Combine features with task embeddings
+        # x = torch.cat([x, task_emb], dim=-1)
+        
+        # if self.verbose:
+        #     self.debugger.check_tensor(x, "Combined input", "Forward")
+        
+        # # Apply masking if provided
+        # if masks is not None:
+        #     x = x * masks.unsqueeze(-1)
+        
+        # # LSTM forward pass
+        # output, _ = self.lstm(x)
+        
+        # if self.verbose:
+        #     self.debugger.check_tensor(output, "LSTM output", "Forward")
+        
+        # # Use final output for classification
+        # return self.classifier(output[:, -1, :])
     
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler"""
