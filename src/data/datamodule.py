@@ -10,6 +10,9 @@ from rich import print as rprint
 from s3_operations.s3_io import S3IOHandler
 from src.data.balanced_batch import BalancedBatchSampler
 from src.data.stratified_k_fold import StratifiedSubjectWindowKFold
+from src.data.data_augmentation import DataAugmentation
+
+
 
 @dataclass
 class DataConfig:
@@ -32,6 +35,7 @@ class DataConfig:
     num_workers: int
     scaler_type: str = "standard"
     verbose: bool = True
+    enable_augmentation: bool = False  
 
 class DataNormalizer:
     """Handles data normalization and preprocessing operations.
@@ -123,6 +127,8 @@ class HandwritingDataset(Dataset):
         self.feature_cols = feature_cols
         self.column_names = column_names
         self.train = train
+        
+        self.augmentor = DataAugmentation(config) if train else None
 
         # Initialize features and labels
         self.features_df = self.data[feature_cols]
@@ -204,6 +210,10 @@ class HandwritingDataset(Dataset):
         window_std = np.nanstd(features_window, axis=0) + 1e-8
         features_window = (features_window - window_mean) / window_std
 
+        # Apply augmentation if training
+        if self.train and self.augmentor:
+            features_window = self.augmentor.apply(features_window)
+        
         return (
             torch.FloatTensor(features_window),
             torch.LongTensor([label]),

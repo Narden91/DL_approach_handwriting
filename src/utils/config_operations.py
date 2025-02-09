@@ -16,7 +16,7 @@ class ConfigOperations:
                 return int(value)
             elif key in ["LEARNING_RATE", "WEIGHT_DECAY", "GRADIENT_CLIP_VAL"]:
                 return float(value)
-            elif key in ["VERBOSE", "TEST_MODE"]:
+            elif key in ["VERBOSE", "TEST_MODE", "ENABLE_AUGMENTATION"]:  # ✅ Added enable_augmentation
                 return value.lower() == "true"
             elif key in ["WINDOW_SIZES", "STRIDES"]:
                 return [int(x) for x in value.split(',')]
@@ -32,7 +32,8 @@ class ConfigOperations:
             "data.window_sizes": convert_value("WINDOW_SIZES", os.getenv("WINDOW_SIZES")),
             "data.strides": convert_value("STRIDES", os.getenv("STRIDES")),
             "data.batch_size": convert_value("BATCH_SIZE", os.getenv("BATCH_SIZE")),
-            "data.yaml_split_path": os.getenv("YAML_SPLIT_PATH"), 
+            "data.yaml_split_path": os.getenv("YAML_SPLIT_PATH"),
+            "data.enable_augmentation": convert_value("ENABLE_AUGMENTATION", os.getenv("ENABLE_AUGMENTATION")),  # ✅ Added this
             "model.type": os.getenv("MODEL_TYPE"),
             "training.max_epochs": convert_value("MAX_EPOCHS", os.getenv("MAX_EPOCHS")),
             "training.learning_rate": convert_value("LEARNING_RATE", os.getenv("LEARNING_RATE")),
@@ -42,16 +43,17 @@ class ConfigOperations:
         }
         # Remove None values
         return {k: v for k, v in env_vars.items() if v is not None}
+    
 
     @staticmethod
     def merge_configurations(hydra_cfg: DictConfig) -> DictConfig:
         """Merge configurations from environment variables with Hydra config."""
         # Get environment variables
         env_config = ConfigOperations.get_env_config()
-        
+
         # Create mutable configuration
         config = OmegaConf.create(OmegaConf.to_container(hydra_cfg, resolve=True))
-        
+
         # Update with environment variables
         for key_path, value in env_config.items():
             parts = key_path.split('.')
@@ -61,10 +63,10 @@ class ConfigOperations:
                     current[part] = {}
                 current = current[part]
             current[parts[-1]] = value
-        
+
         # Display final configuration
         ConfigOperations.display_configuration(config, env_config.keys())
-        
+
         return config
 
     @staticmethod
@@ -85,7 +87,8 @@ class ConfigOperations:
             f"[yellow]Data Settings:[/]\n"
             f"  Window sizes: {format_value('data.window_sizes', config.data.window_sizes)}\n"
             f"  Strides: {format_value('data.strides', config.data.strides)}\n"
-            f"  Batch size: {format_value('data.batch_size', config.data.batch_size)}\n\n"
+            f"  Batch size: {format_value('data.batch_size', config.data.batch_size)}\n"
+            f"  Enable Augmentation: {format_value('data.enable_augmentation', config.data.enable_augmentation)}\n\n"  # ✅ Added this line
             f"[yellow]Training Settings:[/]\n"
             f"  Model Type: {format_value('model.type', config.model.type)}\n"
             f"  Max Epochs: {format_value('training.max_epochs', config.training.max_epochs)}\n"

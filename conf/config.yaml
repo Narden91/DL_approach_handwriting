@@ -15,6 +15,7 @@ experiment_name: "handwriting_analysis"
 device: "cuda"
 
 data:
+  enable_augmentation: true  # Set to false to disable augmentation
   data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
   yaml_split_path: "conf\\split_config.yaml"
   s3_folder_input: "raw-data"
@@ -44,7 +45,7 @@ training:
   gradient_clip_val: 0.4
 
 model:
-  type: "han"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
+  type: "rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32
