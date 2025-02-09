@@ -10,12 +10,12 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: true
+test_mode: false
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
 data:
-  enable_augmentation: true  # Set to false to disable augmentation
+  enable_augmentation: false  # Set to false to disable augmentation
   data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
   yaml_split_path: "conf\\split_config.yaml"
   s3_folder_input: "raw-data"
@@ -38,9 +38,9 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 1
-  learning_rate: 0.00001
-  weight_decay: 0.000005
+  max_epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.00005
   early_stopping_patience: 30
   gradient_clip_val: 0.4
 

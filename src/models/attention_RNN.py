@@ -160,9 +160,6 @@ class AttentionRNN(BaseModel):
         # Use the final output for classification
         final_output = attended_output[:, -1, :].to(device)
 
-        # print(f"Device Check -> x: {x.device}, task_emb: {task_emb.device}, rnn_out: {rnn_out.device}")
-        # print(f"Attention Output: {attended_output.device}, Final Output: {final_output.device}")
-
         return self.classifier(final_output).to(device)
 
     def configure_optimizers(self):
