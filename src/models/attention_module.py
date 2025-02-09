@@ -4,6 +4,51 @@ import torch.nn.functional as F
 import math
 
 
+class TaskSpecificTransformer(nn.Module):
+    """Transformer that dynamically adjusts attention heads and hidden states based on task embeddings."""
+    
+    def __init__(self, d_model, d_task, num_heads=4, dropout=0.1):
+        super().__init__()
+        
+        # Ensure task embedding matches d_model before being added
+        self.task_projection = nn.Linear(d_task, d_model)  # Project task embedding to d_model
+        
+        self.attention = nn.MultiheadAttention(
+            embed_dim=d_model, 
+            num_heads=num_heads, 
+            dropout=dropout, 
+            batch_first=True
+        )
+
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x, task_embedding, mask=None):
+        """
+        Args:
+            x: Input sequence (batch_size, seq_len, d_model)
+            task_embedding: Task embedding (batch_size, d_task)
+            mask: Optional attention mask
+        
+        Returns:
+            Adjusted hidden states after task-specific attention
+        """
+        # Project task embedding to match d_model
+        task_proj = self.task_projection(task_embedding).unsqueeze(1)  # (batch_size, 1, d_model)
+
+        # Ensure input `x` also has `d_model` size before attention
+        x = self.norm(x)  # Ensure x is normalized before applying attention
+        q = x + task_proj  # Modulate input sequence using projected task embedding
+
+        # Apply multi-head attention
+        attn_output, _ = self.attention(q, x, x, attn_mask=mask)
+
+        # Apply layer normalization
+        output = self.norm(attn_output + x)
+        return self.dropout(output)
+
+    
+
 class ScaledDotProductAttention(nn.Module):
     """Basic scaled dot-product attention mechanism."""
 

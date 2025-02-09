@@ -214,6 +214,8 @@ class HandwritingDataset(Dataset):
         if self.train and self.augmentor:
             features_window = self.augmentor.apply(features_window)
         
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
         return (
             torch.FloatTensor(features_window),
             torch.LongTensor([label]),

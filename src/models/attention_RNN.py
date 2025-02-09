@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from src.models.base import BaseModel
-from src.models.attention_module import TaskAwareAttention, TemporalAttention
+from src.models.attention_module import TaskAwareAttention, TaskSpecificTransformer, TemporalAttention
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -57,23 +57,37 @@ class AttentionRNN(BaseModel):
     ):
         super().__init__()
         self.verbose = verbose
-        
+
         # Feature normalization
         self.feature_norm = nn.LayerNorm(input_size)
-        
+
         # Task embedding
         self.task_embedding = nn.Embedding(num_tasks + 1, task_embedding_dim)
         self.embedding_dropout = nn.Dropout(embedding_dropout)
-        
+
+        # Projection layer to ensure task embedding matches hidden_size (128)
+        self.task_projection = nn.Linear(task_embedding_dim, hidden_size)
+
+        # Input projection to match hidden size before passing to transformer
+        self.input_projection = nn.Linear(input_size, hidden_size)
+
+        # Initialize Task-Specific Transformer
+        self.task_transformer = TaskSpecificTransformer(
+            d_model=hidden_size,
+            d_task=hidden_size,  # Ensure task embedding is projected to hidden size
+            num_heads=n_heads,
+            dropout=dropout
+        )
+
         # RNN layer
         self.rnn = nn.RNN(
-            input_size=input_size + task_embedding_dim,  # Combined input size
+            input_size=hidden_size,  # Already projected
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
             dropout=0 if num_layers == 1 else dropout
         )
-        
+
         # Self-attention layer
         self.self_attention = nn.MultiheadAttention(
             embed_dim=hidden_size,
@@ -81,7 +95,7 @@ class AttentionRNN(BaseModel):
             dropout=dropout,
             batch_first=True
         )
-        
+
         # Output classifier
         self.classifier = nn.Sequential(
             nn.LayerNorm(hidden_size),
@@ -90,6 +104,8 @@ class AttentionRNN(BaseModel):
         )
         
         self._init_weights()
+        
+        self.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
         
     def _init_weights(self):
         """Initialize weights with appropriate initialization"""
@@ -107,52 +123,47 @@ class AttentionRNN(BaseModel):
 
     def forward(self, x, task_ids, masks=None):
         """
-        Forward pass with simplified attention mechanism.
         Args:
             x: Input tensor (batch_size, seq_len, input_size)
             task_ids: Task identifiers (batch_size, 1)
             masks: Optional mask tensor (batch_size, seq_len)
+        
+        Returns:
+            Output logits for classification
         """
-        batch_size, seq_len, _ = x.size()
-        
-        # Initial preprocessing
-        x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
-        x = torch.clamp(x, -10, 10)
-        x = self.feature_norm(x)
-        
-        # Process task embeddings
-        task_ids = task_ids.squeeze(-1)
-        task_emb = self.task_embedding(task_ids)
+        device = x.device  # Ensure everything is on the same device
+
+        # Move tensors to device
+        task_ids = task_ids.squeeze(-1).to(device)  
+        task_emb = self.task_embedding(task_ids).to(device)  
         task_emb = self.embedding_dropout(task_emb)
-        task_emb = task_emb.unsqueeze(1).expand(-1, seq_len, -1)
-        
-        # Combine features with task embeddings
-        combined_input = torch.cat([x, task_emb], dim=-1)
-        
-        # Apply masking if provided
-        if masks is not None:
-            combined_input = combined_input * masks.unsqueeze(-1)
-        
+
+        # Ensure task embedding matches hidden_size (d_model)
+        task_emb = self.task_projection(task_emb)  
+
+        # Project input x to hidden size before passing to the transformer
+        x = self.input_projection(x)
+
+        # Apply Task-Specific Transformer
+        x = self.task_transformer(x, task_emb)
+
         # RNN processing
-        rnn_out, _ = self.rnn(combined_input)
-        
+        rnn_out, _ = self.rnn(x)
+
         # Self-attention
-        # Create attention mask if needed
-        if masks is not None:
-            attention_mask = ~masks.bool()
-        else:
-            attention_mask = None
-            
-        # Apply self-attention
+        attention_mask = ~masks.bool() if masks is not None else None
         attended_output, _ = self.self_attention(
             rnn_out, rnn_out, rnn_out,
             key_padding_mask=attention_mask
         )
-        
+
         # Use the final output for classification
-        final_output = attended_output[:, -1, :]
-        
-        return self.classifier(final_output)
+        final_output = attended_output[:, -1, :].to(device)
+
+        # print(f"Device Check -> x: {x.device}, task_emb: {task_emb.device}, rnn_out: {rnn_out.device}")
+        # print(f"Attention Output: {attended_output.device}, Final Output: {final_output.device}")
+
+        return self.classifier(final_output).to(device)
 
     def configure_optimizers(self):
         """Configure optimizer with warmup and cosine decay"""
