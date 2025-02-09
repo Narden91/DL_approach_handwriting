@@ -58,10 +58,10 @@ def print_dataset_info(data_module: HandwritingDataModule):
     feature_table.add_column("Details", style="green")
     
     feature_table.add_row("Number of Features", str(data_module.get_feature_dim()))
-    feature_table.add_row("Number of Tasks", str(data_module.get_num_tasks()))
-    feature_table.add_row("Window Size", str(data_module.window_size))
-    feature_table.add_row("Stride", str(data_module.stride))
-    feature_table.add_row("Batch Size", str(data_module.batch_size))
+    # feature_table.add_row("Number of Tasks", str(data_module.get_num_tasks()))
+    # feature_table.add_row("Window Size", str(data_module.window_size))
+    # feature_table.add_row("Stride", str(data_module.stride))
+    # feature_table.add_row("Batch Size", str(data_module.batch_size))
     
     # Print class distribution
     label_col = data_module.column_names['label']

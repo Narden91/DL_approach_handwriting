@@ -153,6 +153,14 @@ def main(cfg: DictConfig) -> None:
         
         # Initialize S3 handler
         s3_handler: S3IOHandler = S3IOHandler(config, verbose=cfg.verbose)
+        
+        yaml_split_path = cfg.data.get('yaml_split_path', None) 
+
+        # Check if yaml split path exists in local directory
+        if yaml_split_path is not None:
+            if not os.path.exists(yaml_split_path):
+                rprint(f"[red]Error: YAML split file not found at {yaml_split_path}. Exiting...[/red]")
+                return
 
         # Initialize metrics lists
         fold_metrics = []
@@ -189,12 +197,12 @@ def main(cfg: DictConfig) -> None:
                         data_module = HandwritingDataModule(
                             s3_handler=s3_handler,
                             file_key=file_key_load,
-                            config=data_config,  # Pass the config object instead of individual parameters
+                            config=data_config,  
                             column_names=dict(cfg.data.columns),
                             fold=fold,
                             n_folds=cfg.num_folds,
                             seed=fold_seed,
-                            yaml_split_path=cfg.data.get('yaml_split_path', None)
+                            yaml_split_path=yaml_split_path
                         )
 
                         # Setup data
@@ -204,6 +212,7 @@ def main(cfg: DictConfig) -> None:
                         if cfg.verbose:
                             print_feature_info(data_module)
                             print_dataset_info(data_module)
+                            
 
                         # Create and configure model
                         model = ModelFactory.create_model(cfg, data_module)
