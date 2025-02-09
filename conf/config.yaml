@@ -10,7 +10,7 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: false
+test_mode: true
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
@@ -39,8 +39,8 @@ data:
 
 training:
   max_epochs: 1
-  learning_rate: 0.0001
-  weight_decay: 0.0001
+  learning_rate: 0.00001
+  weight_decay: 0.000005
   early_stopping_patience: 30
   gradient_clip_val: 0.4
 
@@ -55,25 +55,25 @@ model:
   activity_l1: 0.01
   bidirectional: true
   rnn_specific:
-    nonlinearity: "tanh"
+    nonlinearity: "relu"
   lstm_specific:
     layer_norm: true
   gru_specific:
     batch_first: true
     bias: true
   xlstm_specific:
-    recurrent_dropout: 0.1
+    recurrent_dropout: 0.2
   attention_specific:
-    n_heads: 4
+    n_heads: 8
   han_specific:
     attention_dim: 64
-    num_heads: 4  # For multi-head attention if needed
+    num_heads: 8  # For multi-head attention if needed
     use_layer_norm: true
-    feature_dropout: 0.1
+    feature_dropout: 0.2
     attention_dropout: 0.1
   lnn_specific:
-    num_cells: 3
-    dt: 0.1
+    num_cells: 4
+    dt: 0.05
     complexity_lambda: 0.01
   
 gpu_settings:
