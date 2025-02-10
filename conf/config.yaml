@@ -16,8 +16,9 @@ device: "cuda"
 
 data:
   enable_augmentation: false  # Set to false to disable augmentation
-  data_dir: "C:\\Users\\Emanuele\\Documents\\ProgettiPython\\DL_approach_handwriting\\data\\raw"
-  yaml_split_path: "conf\\split_config.yaml"
+  data_dir: "C:/Users/Emanuele/Documents/ProgettiPython/DL_approach_handwriting/data/raw"
+  yaml_split_filename: "split_config.yaml"
+  config_path: "conf"
   s3_folder_input: "raw-data"
   data_filename: "aggregated_data.csv"
   s3_folder_output: "results"

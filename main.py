@@ -154,14 +154,17 @@ def main(cfg: DictConfig) -> None:
         # Initialize S3 handler
         s3_handler: S3IOHandler = S3IOHandler(config, verbose=cfg.verbose)
         
-        yaml_split_path = cfg.data.get('yaml_split_path', None) 
+        # yaml_split_path = cfg.data.get('yaml_split_path', None) 
+        
+        yaml_split_path = os.path.join(cfg.data.config_path, cfg.data.yaml_split_filename) 
 
-        # Check if yaml split path exists in local directory
         if yaml_split_path is not None:
             if not os.path.exists(yaml_split_path):
                 rprint(f"[red]Error: YAML split file not found at {yaml_split_path}. Exiting...[/red]")
                 return
 
+        print(f"Yaml split path: {yaml_split_path}") if cfg.verbose else None
+        
         # Initialize metrics lists
         fold_metrics = []
         feature_importance_all = []
@@ -204,7 +207,7 @@ def main(cfg: DictConfig) -> None:
                             seed=fold_seed,
                             yaml_split_path=yaml_split_path
                         )
-
+                        
                         # Setup data
                         data_module.setup()
 
