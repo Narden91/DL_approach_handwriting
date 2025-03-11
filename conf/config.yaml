@@ -10,7 +10,7 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: false
+test_mode: true
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
@@ -23,8 +23,8 @@ data:
   data_filename: "aggregated_data.csv"
   s3_folder_output: "results"
   output_filename: "results"
-  window_sizes: [25]  
-  strides: [10] 
+  window_sizes: [50]  
+  strides: [20] 
   batch_size: 64
   num_workers: 4
   val_size: 0.2
@@ -39,14 +39,14 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 100
+  max_epochs: 1
   learning_rate: 0.0001
   weight_decay: 0.00005
   early_stopping_patience: 30
   gradient_clip_val: 0.4
 
 model:
-  type: "attention_rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
+  type: "lstm"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32
@@ -59,6 +59,7 @@ model:
     nonlinearity: "relu"
   lstm_specific:
     layer_norm: true
+    use_attention: true
   gru_specific:
     batch_first: true
     bias: true

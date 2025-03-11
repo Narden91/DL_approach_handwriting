@@ -111,6 +111,7 @@ class ModelFactory:
                     **base_config,
                     'num_layers': cfg.model.num_layers,
                     'layer_norm': cfg.model.lstm_specific.layer_norm,
+                    'use_attention': cfg.model.lstm_specific.use_attention,
                     'bidirectional': cfg.model.bidirectional
                 }
                 from src.models.LSTM import LSTM
