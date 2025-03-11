@@ -46,7 +46,7 @@ training:
   gradient_clip_val: 0.4
 
 model:
-  type: "lnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
+  type: "hatnet"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn", "hatnet"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32
@@ -54,6 +54,8 @@ model:
   embedding_dropout: 0.1
   zoneout_prob: 0.1
   activity_l1: 0.01
+  dropout_tcn: 0.2
+  tcn_kernel_size: 3
   bidirectional: true
   rnn_specific:
     nonlinearity: "relu"

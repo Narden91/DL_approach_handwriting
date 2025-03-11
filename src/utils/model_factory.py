@@ -5,6 +5,7 @@ from rich import print as rprint
 from src.models.GRU import GRU
 from src.models.LSTM import LSTM
 from src.models.XLSTM import XLSTM
+from src.models.hat_net import HATNet
 from src.models.simpleRNN import SimpleRNN
 from src.models.RNN import RNN
 from src.models.attention_RNN import AttentionRNN
@@ -191,6 +192,20 @@ class ModelFactory:
                     'verbose': cfg.verbose
                 }
                 return HandwritingHAN(**model_config)
+            
+            elif model_type == "hatnet":
+                model_config = {
+                    'input_size': data_module.get_feature_dim(),
+                    'hidden_size': cfg.model.hidden_size,
+                    'tcn_channels': [64, cfg.model.hidden_size],
+                    'num_tasks': cfg.data.num_tasks,
+                    'task_embedding_dim': cfg.model.task_embedding_dim,
+                    'attention_dim': cfg.model.get('attention_dim', 64),
+                    'dropout': cfg.model.dropout,
+                    'dropout_tcn': cfg.model.get('dropout_tcn', 0.2),
+                    'verbose': cfg.verbose
+                }
+                return HATNet(**model_config)
 
             elif model_type == "lnn":
                 # Configure optimized LNN parameters
