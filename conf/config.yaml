@@ -46,7 +46,7 @@ training:
   gradient_clip_val: 0.4
 
 model:
-  type: "lstm"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
+  type: "xlstm"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn"
   hidden_size: 128
   num_layers: 2 # 2
   task_embedding_dim: 32

@@ -2,6 +2,16 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import torch.nn as nn
 from rich import print as rprint
+from src.models.GRU import GRU
+from src.models.LSTM import LSTM
+from src.models.XLSTM import XLSTM
+from src.models.simpleRNN import SimpleRNN
+from src.models.RNN import RNN
+from src.models.attention_RNN import AttentionRNN
+from src.models.han import HANModel
+from src.models.liquid_neural_net import LiquidNeuralNetwork
+
+
 
 @dataclass
 class BaseModelConfig:
@@ -92,7 +102,7 @@ class ModelFactory:
                     'zoneout_prob': cfg.model.zoneout_prob,
                     'activity_l1': cfg.model.activity_l1
                 }
-                from src.models.simpleRNN import SimpleRNN
+                
                 return SimpleRNN(**model_config)
 
             elif model_type == "rnn":
@@ -102,7 +112,6 @@ class ModelFactory:
                     'num_layers': cfg.model.num_layers,
                     'nonlinearity': cfg.model.rnn_specific.nonlinearity
                 }
-                from src.models.RNN import RNN
                 return RNN(**model_config)
 
             elif model_type == "lstm":
@@ -114,7 +123,6 @@ class ModelFactory:
                     'use_attention': cfg.model.lstm_specific.use_attention,
                     'bidirectional': cfg.model.bidirectional
                 }
-                from src.models.LSTM import LSTM
                 return LSTM(**model_config)
 
             elif model_type == "gru":
@@ -124,9 +132,8 @@ class ModelFactory:
                     'num_layers': cfg.model.num_layers,
                     'batch_first': cfg.model.gru_specific.batch_first,
                     'bidirectional': cfg.model.bidirectional,
-                    'bias': cfg.model.gru_specific.bias
+                    'bias': cfg.model.gru_specific.bias,
                 }
-                from src.models.GRU import GRU
                 return GRU(**model_config)
 
             elif model_type == "xlstm":
@@ -138,7 +145,6 @@ class ModelFactory:
                     'recurrent_dropout': cfg.model.xlstm_specific.recurrent_dropout,
                     'embedding_dropout': cfg.model.embedding_dropout
                 }
-                from src.models.XLSTM import XLSTM
                 return XLSTM(**model_config)
 
             elif model_type == "attention_rnn":
@@ -157,7 +163,6 @@ class ModelFactory:
                     'n_heads': cfg.model.attention_specific.n_heads,
                     'window_size': window_size  # Now we have a guaranteed value
                 }
-                from src.models.attention_RNN import AttentionRNN
                 return AttentionRNN(**model_config)
 
             elif model_type == "han":
@@ -176,8 +181,6 @@ class ModelFactory:
                     'dropout': cfg.model.dropout,
                     'verbose': cfg.verbose
                 }
-                
-                from src.models.han import HANModel
                 return HANModel(**model_config)
 
             elif model_type == "lnn":
@@ -188,7 +191,6 @@ class ModelFactory:
                     'dt': cfg.model.lnn_specific.dt,
                     'complexity_lambda': cfg.model.lnn_specific.get('complexity_lambda', 0.01)  # Default value 0.01
                 }
-                from src.models.liquid_neural_net import LiquidNeuralNetwork
                 return LiquidNeuralNetwork(**model_config)
 
             else:

@@ -9,8 +9,12 @@ from src.models.base import BaseModel
 from src.models.RNN import RNNDebugger
 
 
-
 class GRU(BaseModel):
+    """GRU-based model for handwriting analysis.
+    
+    This model uses Gated Recurrent Units (GRU) to process handwriting sequence
+    data, with optional bidirectional processing and task-specific embeddings.
+    """
     def __init__(
         self, 
         input_size=13,
@@ -19,11 +23,27 @@ class GRU(BaseModel):
         num_tasks=34,
         task_embedding_dim=32,
         dropout=0.1,
+        embedding_dropout=0.1,
         batch_first=True,
         bidirectional=True,
         bias=True,
         verbose=False
     ):
+        """Initialize the GRU model.
+        
+        Args:
+            input_size: Dimension of input features
+            hidden_size: Dimension of hidden states
+            num_layers: Number of GRU layers
+            num_tasks: Number of different tasks in the dataset
+            task_embedding_dim: Dimension of task embeddings
+            dropout: Dropout rate for the GRU output
+            embedding_dropout: Dropout rate for embeddings
+            batch_first: Whether input is batch-first format
+            bidirectional: Whether to use bidirectional GRU
+            bias: Whether to use bias in GRU layers
+            verbose: Whether to print debug information
+        """
         super().__init__()
         
         self.save_hyperparameters()
@@ -36,9 +56,9 @@ class GRU(BaseModel):
         # Feature normalization
         self.feature_norm = nn.LayerNorm(input_size)
         
-        # Task embedding
+        # Task embedding with dropout
         self.task_embedding = nn.Embedding(num_tasks + 1, task_embedding_dim)
-        self.embedding_dropout = nn.Dropout(dropout)
+        self.embedding_dropout = nn.Dropout(embedding_dropout)
         
         # Combined input size
         rnn_input_size = input_size + task_embedding_dim
@@ -67,7 +87,7 @@ class GRU(BaseModel):
         self._init_weights()
         
     def _init_weights(self):
-        """Initialize weights with appropriate initialization"""
+        """Initialize weights with appropriate initialization for GRUs."""
         # Initialize embedding
         nn.init.uniform_(self.task_embedding.weight, -0.05, 0.05)
         
@@ -79,8 +99,12 @@ class GRU(BaseModel):
                 nn.init.orthogonal_(param, gain=1.0)
             elif 'bias' in name:
                 nn.init.zeros_(param)
-                # Set forget gate bias to 1
-                nn.init.constant_(param[self.hidden_size:2*self.hidden_size], 1.0)
+                # Set reset gate bias to 1 (similar to LSTM forget gate)
+                if self.bidirectional:
+                    nn.init.constant_(param[self.hidden_size:2*self.hidden_size], 1.0)
+                    nn.init.constant_(param[3*self.hidden_size:4*self.hidden_size], 1.0)
+                else:
+                    nn.init.constant_(param[self.hidden_size:2*self.hidden_size], 1.0)
         
         # Initialize classifier
         for name, param in self.classifier.named_parameters():
@@ -93,7 +117,7 @@ class GRU(BaseModel):
                 nn.init.zeros_(param)
                 
     def set_class_weights(self, dataset):
-        """Set class weights from dataset"""
+        """Set class weights from dataset for weighted loss calculation."""
         if hasattr(dataset, 'class_weights'):
             self.class_weights = torch.tensor([
                 dataset.class_weights[0],
@@ -102,11 +126,15 @@ class GRU(BaseModel):
                 
     def forward(self, x, task_ids, masks=None):
         """
-        Forward pass of the model.
+        Forward pass of the GRU model.
+        
         Args:
             x: Input tensor of shape (batch_size, seq_len, input_size)
             task_ids: Task identifiers of shape (batch_size, 1)
             masks: Optional mask tensor of shape (batch_size, seq_len)
+            
+        Returns:
+            Logits for classification
         """
         batch_size, seq_len, _ = x.size()
         
@@ -157,7 +185,7 @@ class GRU(BaseModel):
         return self.classifier(final_output)
     
     def configure_optimizers(self):
-        """Configure optimizer and learning rate scheduler"""
+        """Configure optimizer and learning rate scheduler."""
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.model_config['learning_rate'],
@@ -184,7 +212,7 @@ class GRU(BaseModel):
         }
     
     def aggregate_predictions(self, window_preds, subject_ids):
-        """Aggregate window-level predictions to subject-level"""
+        """Aggregate window-level predictions to subject-level."""
         pred_probs = torch.sigmoid(window_preds).cpu().numpy()
         subject_preds = {}
         
@@ -193,7 +221,13 @@ class GRU(BaseModel):
                 subject_preds[subj_id] = []
             subject_preds[subj_id].append(pred)
         
-        # Average predictions for each subject
-        final_preds = {subj: np.mean(preds) > 0.5 
-                      for subj, preds in subject_preds.items()}
+        # Calculate weighted average based on prediction confidence
+        final_preds = {}
+        for subj, preds in subject_preds.items():
+            preds_array = np.array(preds)
+            # Higher weight for predictions further from decision boundary
+            confidence = np.abs(preds_array - 0.5) + 0.5
+            weighted_avg = np.average(preds_array, weights=confidence)
+            final_preds[subj] = weighted_avg > 0.5
+            
         return final_preds
