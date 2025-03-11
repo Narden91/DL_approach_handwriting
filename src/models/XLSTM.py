@@ -1,5 +1,4 @@
 import numpy as np
-import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,27 +8,37 @@ from src.models.base import BaseModel
 from src.models.RNN import RNNDebugger
 
 
-class HighwayLayer(nn.Module):
-    """Highway Connection Layer for LSTMs."""
-    def __init__(self, size):
-        super().__init__()
-        self.transform_gate = nn.Linear(size, size)
-        self.carry_gate = nn.Linear(size, size)
-        self.init_weights()
-
-    def init_weights(self):
-        nn.init.xavier_uniform_(self.transform_gate.weight)
-        nn.init.xavier_uniform_(self.carry_gate.weight)
-        nn.init.zeros_(self.transform_gate.bias)
-        nn.init.ones_(self.carry_gate.bias)
-
-    def forward(self, x, h):
-        transform = torch.sigmoid(self.transform_gate(h))
-        carry = torch.sigmoid(self.carry_gate(h))
-        return transform * x + carry * h
+class ResidualConnection(nn.Module):
+    """Simple residual connection for improved gradient flow.
     
+    This replaces the more complex HighwayLayer with a simpler
+    residual connection that still facilitates gradient flow.
+    """
+    def __init__(self, size, dropout=0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(size)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x, residual):
+        """Apply residual connection with normalization.
+        
+        Args:
+            x: Main path tensor
+            residual: Residual path tensor
+            
+        Returns:
+            Combined tensor with residual connection
+        """
+        return self.norm(x + self.dropout(residual))
+
 
 class XLSTM(BaseModel):
+    """Extended LSTM model optimized for handwriting analysis.
+    
+    This model implements a simplified version of XLSTM that reduces
+    architectural complexity while focusing on the core strengths
+    needed for handwriting sequence analysis.
+    """
     def __init__(
         self, 
         input_size=13,
@@ -41,8 +50,24 @@ class XLSTM(BaseModel):
         embedding_dropout=0.1,
         layer_norm=True,
         recurrent_dropout=0.1,
+        bidirectional=True,
         verbose=False
     ):
+        """Initialize the streamlined XLSTM model.
+        
+        Args:
+            input_size: Dimension of input features
+            hidden_size: Dimension of LSTM hidden states
+            num_layers: Number of LSTM layers
+            num_tasks: Number of different tasks
+            task_embedding_dim: Dimension of task embeddings
+            dropout: General dropout rate
+            embedding_dropout: Dropout rate for embeddings
+            layer_norm: Whether to use layer normalization
+            recurrent_dropout: Dropout rate for recurrent connections
+            bidirectional: Whether to use bidirectional LSTM
+            verbose: Whether to print debug information
+        """
         super().__init__()
         
         self.save_hyperparameters()
@@ -50,10 +75,10 @@ class XLSTM(BaseModel):
         self.debugger = RNNDebugger()
         self.num_layers = num_layers
         self.hidden_size = hidden_size
+        self.bidirectional = bidirectional
         
-        # Feature normalization layers
+        # Feature normalization
         self.feature_norm = nn.LayerNorm(input_size)
-        self.input_norm = nn.BatchNorm1d(input_size, eps=1e-5, momentum=0.1)
         
         # Task embedding with dropout
         self.task_embedding = nn.Embedding(num_tasks + 1, task_embedding_dim)
@@ -69,60 +94,25 @@ class XLSTM(BaseModel):
             num_layers=num_layers,
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0,
-            bidirectional=True
+            bidirectional=bidirectional
         )
         
-        # Highway layers for improved information flow
-        self.highway = HighwayLayer(hidden_size * 2)
-        
         # Output size considering bidirectional
-        output_size = hidden_size * 2
+        output_size = hidden_size * 2 if bidirectional else hidden_size
+        
+        # Simple residual connection
+        self.residual = ResidualConnection(output_size, dropout)
         
         # Classifier with layer normalization
         self.classifier = nn.Sequential(
-            nn.LayerNorm(output_size),
             nn.Dropout(dropout),
             nn.Linear(output_size, 1)
         )
         
         self._init_weights()
         
-        if verbose:
-            rprint(f"\n[bold blue]XLSTM Model Configuration:[/bold blue]")
-            rprint(f"Input Size: {input_size}")
-            rprint(f"Hidden Size: {hidden_size}")
-            rprint(f"Number of Layers: {num_layers}")
-            rprint(f"Task Embedding Dim: {task_embedding_dim}")
-            rprint(f"Dropout: {dropout}")
-            rprint(f"Embedding Dropout: {embedding_dropout}")
-            rprint(f"Recurrent Dropout: {recurrent_dropout}")
-            rprint(f"Layer Norm: {layer_norm}")
-        
-        # # Output size considering bidirectional
-        # output_size = hidden_size * 2
-        
-        # # Classifier with layer normalization
-        # self.classifier = nn.Sequential(
-        #     nn.LayerNorm(output_size),
-        #     nn.Dropout(dropout),
-        #     nn.Linear(output_size, 1)
-        # )
-        
-        # self._init_weights()
-        
-        # if verbose:
-        #     rprint(f"\n[bold blue]XLSTM Model Configuration:[/bold blue]")
-        #     rprint(f"Input Size: {input_size}")
-        #     rprint(f"Hidden Size: {hidden_size}")
-        #     rprint(f"Number of Layers: {num_layers}")
-        #     rprint(f"Task Embedding Dim: {task_embedding_dim}")
-        #     rprint(f"Dropout: {dropout}")
-        #     rprint(f"Embedding Dropout: {embedding_dropout}")
-        #     rprint(f"Recurrent Dropout: {recurrent_dropout}")
-        #     rprint(f"Layer Norm: {layer_norm}")
-
     def _init_weights(self):
-        """Initialize weights with appropriate initialization schemes"""
+        """Initialize weights with appropriate initialization schemes."""
         # Initialize embedding with smaller values
         nn.init.uniform_(self.task_embedding.weight, -0.05, 0.05)
         
@@ -141,15 +131,12 @@ class XLSTM(BaseModel):
         # Initialize classifier
         for name, param in self.classifier.named_parameters():
             if 'weight' in name:
-                if len(param.shape) >= 2:
-                    nn.init.xavier_uniform_(param, gain=0.1)
-                else:
-                    nn.init.uniform_(param, -0.1, 0.1)
+                nn.init.xavier_uniform_(param, gain=0.1)
             elif 'bias' in name:
                 nn.init.zeros_(param)
 
     def set_class_weights(self, dataset):
-        """Set class weights from dataset"""
+        """Set class weights from dataset for loss computation."""
         if hasattr(dataset, 'class_weights'):
             self.class_weights = torch.tensor([
                 dataset.class_weights[0],
@@ -157,24 +144,34 @@ class XLSTM(BaseModel):
             ], device=self.device)
 
     def forward(self, x, task_ids, masks=None):
-        """
-        Forward pass of the model.
+        """Forward pass of the streamlined XLSTM model.
+        
         Args:
             x: Input tensor of shape (batch_size, seq_len, input_size)
             task_ids: Task identifiers of shape (batch_size, 1)
             masks: Optional mask tensor of shape (batch_size, seq_len)
+            
+        Returns:
+            Logits for classification
         """
         batch_size, seq_len, _ = x.size()
         
-        # Initial preprocessing
+        # Initial preprocessing with adaptive clipping
         x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
-        x = torch.clamp(x, -10, 10)
+        
+        # Adaptive clipping based on distribution stats
+        with torch.no_grad():
+            mean = x.mean()
+            std = x.std()
+            clip_min = mean - 5 * std
+            clip_max = mean + 5 * std
+        
+        x = torch.clamp(x, clip_min, clip_max)
         
         if self.verbose:
             self.debugger.check_tensor(x, "Initial input", "Forward")
         
-        # Apply normalization
-        x = self.input_norm(x.transpose(1, 2)).transpose(1, 2)
+        # Apply layer normalization
         x = self.feature_norm(x)
         
         # Process task embeddings
@@ -193,58 +190,57 @@ class XLSTM(BaseModel):
         if masks is not None:
             x = x * masks.unsqueeze(-1)
         
-        output, (h_n, _) = self.lstm(x)
-
-        # Fixing shape mismatch in Highway Connection
-        h_n = h_n.view(self.num_layers, 2, batch_size, self.hidden_size)
-        h_n = torch.cat((h_n[-1, 0], h_n[-1, 1]), dim=-1)  # Concatenating both directions
-
-        # Apply Highway Connection
-        output = self.highway(output[:, -1, :], h_n) # Ensuring correct shape
-        output = output.view(batch_size, -1)  # Flatten for classifier
-        return self.classifier(output)
-
-    
-        # batch_size, seq_len, _ = x.size()
+        # Initialize hidden and cell states
+        num_directions = 2 if self.bidirectional else 1
+        h0 = torch.zeros(
+            self.num_layers * num_directions,
+            batch_size,
+            self.hidden_size,
+            device=x.device
+        )
+        c0 = torch.zeros(
+            self.num_layers * num_directions,
+            batch_size,
+            self.hidden_size,
+            device=x.device
+        )
         
-        # # Initial preprocessing
-        # x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
-        # x = torch.clamp(x, -10, 10)
+        # LSTM forward pass
+        # Store original input for residual connection
+        original_x = x
+        output, (h_n, _) = self.lstm(x, (h0, c0))
         
-        # if self.verbose:
-        #     self.debugger.check_tensor(x, "Initial input", "Forward")
+        if self.verbose:
+            self.debugger.check_tensor(output, "LSTM output", "Forward")
         
-        # # Apply normalization
-        # x = self.input_norm(x.transpose(1, 2)).transpose(1, 2)
-        # x = self.feature_norm(x)
+        # Process the last hidden state from each direction if bidirectional
+        if self.bidirectional:
+            # Reshape to separate layers and directions
+            h_n = h_n.view(self.num_layers, 2, batch_size, self.hidden_size)
+            # Take last layer's hidden states from both directions
+            h_forward = h_n[-1, 0]  # Last layer, forward direction
+            h_backward = h_n[-1, 1]  # Last layer, backward direction
+            # Concatenate both directions
+            final_hidden = torch.cat([h_forward, h_backward], dim=-1)
+        else:
+            # Just take the last layer's hidden state
+            final_hidden = h_n[-1]
         
-        # # Process task embeddings
-        # task_ids = task_ids.squeeze(-1)
-        # task_emb = self.task_embedding(task_ids)
-        # task_emb = self.embedding_dropout(task_emb)
-        # task_emb = task_emb.unsqueeze(1).expand(-1, seq_len, -1)
-        
-        # # Combine features with task embeddings
-        # x = torch.cat([x, task_emb], dim=-1)
-        
-        # if self.verbose:
-        #     self.debugger.check_tensor(x, "Combined input", "Forward")
-        
-        # # Apply masking if provided
-        # if masks is not None:
-        #     x = x * masks.unsqueeze(-1)
-        
-        # # LSTM forward pass
-        # output, _ = self.lstm(x)
-        
-        # if self.verbose:
-        #     self.debugger.check_tensor(output, "LSTM output", "Forward")
-        
-        # # Use final output for classification
-        # return self.classifier(output[:, -1, :])
+        # Apply residual connection if shapes are compatible
+        if seq_len > 0 and original_x.size(-1) == output.size(-1):
+            # Use the mean of original sequence for the residual
+            residual_input = original_x.mean(dim=1)
+            if residual_input.size(-1) == final_hidden.size(-1):
+                final_output = self.residual(final_hidden, residual_input)
+            else:
+                final_output = final_hidden
+        else:
+            final_output = final_hidden
+            
+        return self.classifier(final_output)
     
     def configure_optimizers(self):
-        """Configure optimizer and learning rate scheduler"""
+        """Configure optimizer and learning rate scheduler."""
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.model_config['learning_rate'],
@@ -252,13 +248,11 @@ class XLSTM(BaseModel):
             amsgrad=True
         )
         
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
-            mode='max',
-            factor=0.5,
-            patience=5,
-            min_lr=1e-6,
-            verbose=True
+            T_0=10,
+            T_mult=2,
+            eta_min=1e-6
         )
         
         return {
@@ -271,7 +265,7 @@ class XLSTM(BaseModel):
         }
     
     def aggregate_predictions(self, window_preds, subject_ids):
-        """Aggregate window-level predictions to subject-level"""
+        """Aggregate window-level predictions to subject-level using confidence weighting."""
         pred_probs = torch.sigmoid(window_preds).cpu().numpy()
         subject_preds = {}
         
@@ -280,7 +274,13 @@ class XLSTM(BaseModel):
                 subject_preds[subj_id] = []
             subject_preds[subj_id].append(pred)
         
-        # Average predictions for each subject
-        final_preds = {subj: np.mean(preds) > 0.5 
-                      for subj, preds in subject_preds.items()}
+        # Calculate weighted average based on prediction confidence
+        final_preds = {}
+        for subj, preds in subject_preds.items():
+            preds_array = np.array(preds)
+            # Higher weight for predictions further from decision boundary
+            confidence = np.abs(preds_array - 0.5) + 0.5
+            weighted_avg = np.average(preds_array, weights=confidence)
+            final_preds[subj] = weighted_avg > 0.5
+            
         return final_preds

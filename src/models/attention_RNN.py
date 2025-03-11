@@ -3,45 +3,98 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from src.models.base import BaseModel
-from src.models.attention_module import TaskAwareAttention, TaskSpecificTransformer, TemporalAttention
 
 
-class ScaledDotProductAttention(nn.Module):
-    def __init__(self, temperature, dropout=0.1):
-        super().__init__()
-        self.temperature = temperature
-        self.dropout = nn.Dropout(dropout)
+class TaskAwareAttention(nn.Module):
+    """Attention mechanism that incorporates task-specific information.
     
-    def forward(self, q, k, v, mask=None):
-        # q, k, v shapes: (batch_size, n_heads, len_q/k/v, d_k/v)
-        attn = torch.matmul(q / self.temperature, k.transpose(2, 3))
+    This module allows the model to focus on different aspects of the
+    handwriting sequence based on the current task being performed.
+    """
+    def __init__(self, hidden_size, task_dim, num_heads=4, dropout=0.1):
+        """Initialize task-aware attention mechanism.
         
-        if mask is not None:
-            attn = attn.masked_fill(mask == 0, -1e9)
-        
-        attn = self.dropout(F.softmax(attn, dim=-1))
-        output = torch.matmul(attn, v)
-        
-        return output, attn
-
-class MultiHeadAttention(nn.Module):
-    def __init__(self, n_head, d_model, d_k, d_v, dropout=0.1):
+        Args:
+            hidden_size: Size of the hidden representations
+            task_dim: Dimension of the task embedding
+            num_heads: Number of attention heads
+            dropout: Dropout probability
+        """
         super().__init__()
         
-        self.n_head = n_head
-        self.d_k = d_k
-        self.d_v = d_v
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+        assert self.head_dim * num_heads == hidden_size, "hidden_size must be divisible by num_heads"
         
-        self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)
-        self.fc = nn.Linear(n_head * d_v, d_model, bias=False)
+        # Task-specific projection
+        self.task_projection = nn.Linear(task_dim, hidden_size)
         
-        self.attention = ScaledDotProductAttention(temperature=d_k ** 0.5, dropout=dropout)
+        # Multi-head attention components
+        self.q_projection = nn.Linear(hidden_size, hidden_size)
+        self.k_projection = nn.Linear(hidden_size, hidden_size)
+        self.v_projection = nn.Linear(hidden_size, hidden_size)
+        self.output_projection = nn.Linear(hidden_size, hidden_size)
+        
         self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        
+    def forward(self, hidden_states, task_embedding, mask=None):
+        """Apply task-aware attention to the hidden states.
+        
+        Args:
+            hidden_states: Sequence of hidden states (batch_size, seq_len, hidden_size)
+            task_embedding: Task embedding vector (batch_size, task_dim)
+            mask: Optional attention mask (batch_size, seq_len)
+            
+        Returns:
+            Attended hidden states (batch_size, seq_len, hidden_size)
+        """
+        batch_size, seq_len, hidden_size = hidden_states.size()
+        
+        # Project task embedding
+        task_info = self.task_projection(task_embedding).unsqueeze(1)  # (batch_size, 1, hidden_size)
+        
+        # Use task embedding to modulate query projection
+        q = self.q_projection(hidden_states + task_info)
+        k = self.k_projection(hidden_states)
+        v = self.v_projection(hidden_states)
+        
+        # Reshape for multi-head attention
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        
+        # Scaled dot-product attention
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        
+        # Apply mask if provided
+        if mask is not None:
+            mask = mask.unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1, seq_len)
+            scores = scores.masked_fill(mask == 0, -1e9)
+            
+        attention_weights = F.softmax(scores, dim=-1)
+        attention_weights = self.dropout(attention_weights)
+        
+        context = torch.matmul(attention_weights, v)
+        
+        # Reshape back
+        context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_size)
+        
+        # Final projection and residual connection
+        output = self.output_projection(context)
+        output = self.dropout(output)
+        output = self.layer_norm(output + hidden_states)
+        
+        return output
+
 
 class AttentionRNN(BaseModel):
+    """RNN model with task-aware attention for handwriting analysis.
+    
+    This model combines a recurrent neural network with a task-aware
+    attention mechanism to better capture relevant patterns in handwriting
+    sequences for different tasks.
+    """
     def __init__(
         self,
         input_size=13,
@@ -52,11 +105,28 @@ class AttentionRNN(BaseModel):
         n_heads=4,
         dropout=0.3,
         embedding_dropout=0.1,
-        window_size=25,
+        bidirectional=True,
         verbose=False
     ):
+        """Initialize the AttentionRNN model.
+        
+        Args:
+            input_size: Dimension of input features
+            hidden_size: Size of RNN hidden states
+            num_layers: Number of RNN layers
+            task_embedding_dim: Dimension of task embeddings
+            num_tasks: Number of different tasks
+            n_heads: Number of attention heads
+            dropout: Dropout probability
+            embedding_dropout: Dropout for embeddings
+            bidirectional: Whether to use bidirectional RNN
+            verbose: Whether to print debug information
+        """
         super().__init__()
         self.verbose = verbose
+        self.bidirectional = bidirectional
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
 
         # Feature normalization
         self.feature_norm = nn.LayerNorm(input_size)
@@ -65,64 +135,61 @@ class AttentionRNN(BaseModel):
         self.task_embedding = nn.Embedding(num_tasks + 1, task_embedding_dim)
         self.embedding_dropout = nn.Dropout(embedding_dropout)
 
-        # Projection layer to ensure task embedding matches hidden_size (128)
-        self.task_projection = nn.Linear(task_embedding_dim, hidden_size)
+        # RNN layer
+        self.rnn = nn.GRU(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0,
+            bidirectional=bidirectional
+        )
 
-        # Input projection to match hidden size before passing to transformer
-        self.input_projection = nn.Linear(input_size, hidden_size)
+        # Output size considering bidirectionality
+        output_size = hidden_size * 2 if bidirectional else hidden_size
 
-        # Initialize Task-Specific Transformer
-        self.task_transformer = TaskSpecificTransformer(
-            d_model=hidden_size,
-            d_task=hidden_size,  # Ensure task embedding is projected to hidden size
+        # Task-aware attention
+        self.task_attention = TaskAwareAttention(
+            hidden_size=output_size,
+            task_dim=task_embedding_dim,
             num_heads=n_heads,
             dropout=dropout
         )
 
-        # RNN layer
-        self.rnn = nn.RNN(
-            input_size=hidden_size,  # Already projected
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            dropout=0 if num_layers == 1 else dropout
-        )
-
-        # Self-attention layer
-        self.self_attention = nn.MultiheadAttention(
-            embed_dim=hidden_size,
-            num_heads=n_heads,
-            dropout=dropout,
-            batch_first=True
-        )
-
         # Output classifier
         self.classifier = nn.Sequential(
-            nn.LayerNorm(hidden_size),
+            nn.LayerNorm(output_size),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size, 1)
+            nn.Linear(output_size, 1)
         )
         
         self._init_weights()
         
-        self.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-        
     def _init_weights(self):
-        """Initialize weights with appropriate initialization"""
-        for name, param in self.named_parameters():
-            if 'weight' in name:
-                if len(param.shape) >= 2:
-                    nn.init.orthogonal_(param, gain=0.1)
-                else:
-                    nn.init.uniform_(param, -0.1, 0.1)
+        """Initialize weights with appropriate initialization methods."""
+        # Initialize task embedding
+        nn.init.uniform_(self.task_embedding.weight, -0.05, 0.05)
+        
+        # Initialize RNN weights
+        for name, param in self.rnn.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.xavier_uniform_(param, gain=1.0)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param, gain=1.0)
             elif 'bias' in name:
                 nn.init.zeros_(param)
-                
-        # Special initialization for embedding
-        nn.init.uniform_(self.task_embedding.weight, -0.05, 0.05)
+        
+        # Initialize classifier
+        for name, param in self.classifier.named_parameters():
+            if 'weight' in name and param.dim() > 1:
+                nn.init.xavier_uniform_(param, gain=0.1)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
 
     def forward(self, x, task_ids, masks=None):
         """
+        Forward pass of the AttentionRNN model.
+        
         Args:
             x: Input tensor (batch_size, seq_len, input_size)
             task_ids: Task identifiers (batch_size, 1)
@@ -131,39 +198,43 @@ class AttentionRNN(BaseModel):
         Returns:
             Output logits for classification
         """
-        device = x.device  # Ensure everything is on the same device
+        batch_size, seq_len, _ = x.size()
+        device = x.device
 
-        # Move tensors to device
-        task_ids = task_ids.squeeze(-1).to(device)  
-        task_emb = self.task_embedding(task_ids).to(device)  
+        # Initial preprocessing
+        x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
+        x = torch.clamp(x, -10, 10)
+
+        # Apply feature normalization
+        x = self.feature_norm(x)
+
+        # Process task embeddings
+        task_ids = task_ids.squeeze(-1)
+        task_emb = self.task_embedding(task_ids)
         task_emb = self.embedding_dropout(task_emb)
 
-        # Ensure task embedding matches hidden_size (d_model)
-        task_emb = self.task_projection(task_emb)  
-
-        # Project input x to hidden size before passing to the transformer
-        x = self.input_projection(x)
-
-        # Apply Task-Specific Transformer
-        x = self.task_transformer(x, task_emb)
-
-        # RNN processing
-        rnn_out, _ = self.rnn(x)
-
-        # Self-attention
-        attention_mask = ~masks.bool() if masks is not None else None
-        attended_output, _ = self.self_attention(
-            rnn_out, rnn_out, rnn_out,
-            key_padding_mask=attention_mask
+        # Initialize hidden state
+        num_directions = 2 if self.bidirectional else 1
+        h0 = torch.zeros(
+            self.num_layers * num_directions,
+            batch_size,
+            self.hidden_size,
+            device=device
         )
 
-        # Use the final output for classification
-        final_output = attended_output[:, -1, :].to(device)
+        # RNN processing
+        rnn_out, _ = self.rnn(x, h0)
 
-        return self.classifier(final_output).to(device)
+        # Apply task-aware attention
+        attended_output = self.task_attention(rnn_out, task_emb, masks)
+
+        # Use the final output for classification
+        final_output = attended_output[:, -1, :]
+
+        return self.classifier(final_output)
 
     def configure_optimizers(self):
-        """Configure optimizer with warmup and cosine decay"""
+        """Configure optimizer with cosine annealing scheduler."""
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.model_config['learning_rate'],
@@ -187,7 +258,7 @@ class AttentionRNN(BaseModel):
         }
 
     def aggregate_predictions(self, window_preds, subject_ids):
-        """Aggregate window-level predictions to subject-level with confidence"""
+        """Aggregate window-level predictions to subject-level with confidence weighting."""
         pred_probs = torch.sigmoid(window_preds).cpu().numpy()
         subject_preds = {}
         
@@ -196,11 +267,11 @@ class AttentionRNN(BaseModel):
                 subject_preds[subj_id] = []
             subject_preds[subj_id].append(pred)
         
-        # Weighted average based on prediction confidence
+        # Weight predictions by confidence
         final_preds = {}
         for subj, preds in subject_preds.items():
             preds = np.array(preds)
-            confidence = np.abs(preds - 0.5) + 0.5  # Higher weight for more confident predictions
+            confidence = np.abs(preds - 0.5) + 0.5
             weighted_avg = np.average(preds, weights=confidence)
             final_preds[subj] = weighted_avg > 0.5
             

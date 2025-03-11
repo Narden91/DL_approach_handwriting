@@ -8,8 +8,8 @@ from src.models.XLSTM import XLSTM
 from src.models.simpleRNN import SimpleRNN
 from src.models.RNN import RNN
 from src.models.attention_RNN import AttentionRNN
-from src.models.han import HANModel
-from src.models.liquid_neural_net import LiquidNeuralNetwork
+from src.models.han import HandwritingHAN
+from src.models.liquid_neural_net import LiquidNetwork
 
 
 
@@ -161,7 +161,7 @@ class ModelFactory:
                     **base_config,
                     'num_layers': cfg.model.num_layers,
                     'n_heads': cfg.model.attention_specific.n_heads,
-                    'window_size': window_size  # Now we have a guaranteed value
+                    # 'window_size': window_size  # Now we have a guaranteed value
                 }
                 return AttentionRNN(**model_config)
 
@@ -171,27 +171,41 @@ class ModelFactory:
                     data_module.feature_cols
                 )
                 
-                # Configure HANModel params
+                # Create feature dimensions dictionary
+                feature_dims = {
+                    'static': len(static_features),
+                    'dynamic': len(dynamic_features)
+                }
+                
+                # Configure HandwritingHAN params
                 model_config = {
-                    'static_features': static_features,
-                    'dynamic_features': dynamic_features,
+                    'feature_dims': feature_dims,
                     'hidden_size': cfg.model.hidden_size,
                     'attention_dim': cfg.model.han_specific.attention_dim,
-                    'num_tasks': cfg.data.num_tasks, 
+                    'num_tasks': cfg.data.num_tasks,
+                    'task_embedding_dim': cfg.model.task_embedding_dim,
                     'dropout': cfg.model.dropout,
+                    'feature_dropout': cfg.model.han_specific.get('feature_dropout', 0.2),
+                    'attention_dropout': cfg.model.han_specific.get('attention_dropout', 0.1),
+                    'use_layer_norm': cfg.model.han_specific.get('use_layer_norm', True),
                     'verbose': cfg.verbose
                 }
-                return HANModel(**model_config)
+                return HandwritingHAN(**model_config)
 
             elif model_type == "lnn":
+                # Configure optimized LNN parameters
                 model_config = {
-                    **base_config,
+                    'input_size': data_module.get_feature_dim(),
+                    'hidden_size': cfg.model.hidden_size,
                     'num_layers': cfg.model.num_layers,
-                    'num_cells': cfg.model.lnn_specific.num_cells,
-                    'dt': cfg.model.lnn_specific.dt,
-                    'complexity_lambda': cfg.model.lnn_specific.get('complexity_lambda', 0.01)  # Default value 0.01
+                    'num_tasks': cfg.data.num_tasks,
+                    'task_embedding_dim': cfg.model.task_embedding_dim,
+                    'dropout': cfg.model.dropout,
+                    'dt': cfg.model.lnn_specific.get('dt', 0.1),  # Default dt value of 0.1
+                    'bidirectional': cfg.model.get('bidirectional', False),  # Optional bidirectional processing
+                    'verbose': cfg.verbose
                 }
-                return LiquidNeuralNetwork(**model_config)
+                return LiquidNetwork(**model_config)
 
             else:
                 raise ValueError(
