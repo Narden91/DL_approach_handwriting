@@ -11,6 +11,7 @@ from src.models.RNN import RNN
 from src.models.attention_RNN import AttentionRNN
 from src.models.han import HandwritingHAN
 from src.models.liquid_neural_net import LiquidNetwork
+from src.models.transformer_model import PretrainedTransformerModel
 
 
 
@@ -221,12 +222,29 @@ class ModelFactory:
                     'verbose': cfg.verbose
                 }
                 return LiquidNetwork(**model_config)
+            
+            elif model_type == "transformer":
+                # Configure optimized Transformer parameters
+                model_config = {
+                    'input_size': data_module.get_feature_dim(),
+                    'hidden_size': cfg.model.hidden_size,
+                    'num_heads': cfg.model.transformer_specific.get('num_heads', 8),
+                    'num_layers': cfg.model.transformer_specific.get('num_layers', 6),
+                    'num_tasks': cfg.data.num_tasks,
+                    'task_embedding_dim': cfg.model.task_embedding_dim,
+                    'dropout': cfg.model.dropout,
+                    'max_seq_length': cfg.model.transformer_specific.get('max_seq_length', 100),
+                    'pretrained_model_name': cfg.model.transformer_specific.get('pretrained_model_name', 'distilbert-base-uncased'),
+                    'freeze_base': cfg.model.transformer_specific.get('freeze_base', False),
+                    'verbose': cfg.verbose
+                }
+                return PretrainedTransformerModel(**model_config)
 
             else:
                 raise ValueError(
                     f"Unknown model type: {model_type}. "
                     "Supported types are: rnn, lstm, gru, xlstm, simplernn, "
-                    "attention_rnn, han, lnn"
+                    "attention_rnn, han, lnn, transformer"
                 )
 
         except Exception as e:

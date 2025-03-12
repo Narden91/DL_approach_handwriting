@@ -46,9 +46,9 @@ training:
   gradient_clip_val: 0.4
 
 model:
-  type: "hatnet"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn", "hatnet"
-  hidden_size: 128
-  num_layers: 2 # 2
+  type: "transformer"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn", "hatnet", transformer
+  hidden_size: 256 # 128 (per transformer: 256 )
+  num_layers: 6 # 2 (per transformer: 6 )
   task_embedding_dim: 32
   dropout: 0.3
   embedding_dropout: 0.1
@@ -79,9 +79,14 @@ model:
     num_cells: 4
     dt: 0.05
     complexity_lambda: 0.01
+  transformer_specific:
+    num_heads: 8
+    max_seq_length: 100
+    pretrained_model_name: "distilbert-base-uncased"
+    freeze_base: false
   
 gpu_settings:
   gpu_id: 0  # Specify which GPU to use
-  precision: 32  # Can be 16 for mixed precision if needed
+  precision: 32  
 
 version_base: "1.1"

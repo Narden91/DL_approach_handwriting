@@ -115,9 +115,10 @@ def configure_training(config):
         "log_every_n_steps": 10,
         "val_check_interval": 0.5,
         "enable_checkpointing": False,
-        "deterministic": True
+        "deterministic": True,
+        "precision": config.gpu_settings.get("precision", 32)  
     }
-
+    
     return trainer_config, wandb_logger
 
 
