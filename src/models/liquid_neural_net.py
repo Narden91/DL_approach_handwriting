@@ -83,7 +83,7 @@ class SimpleLiquidCell(nn.Module):
 
 
 class LiquidNetwork(BaseModel):
-    """Simplified Liquid Neural Network for handwriting analysis.
+    """Liquid Neural Network for handwriting analysis.
     
     This model implements a streamlined version of Liquid Neural Networks
     that focuses on computational efficiency while preserving the adaptive

@@ -217,7 +217,7 @@ class ModelFactory:
                     'task_embedding_dim': cfg.model.task_embedding_dim,
                     'dropout': cfg.model.dropout,
                     'dt': cfg.model.lnn_specific.get('dt', 0.1),  # Default dt value of 0.1
-                    'bidirectional': cfg.model.get('bidirectional', False),  # Optional bidirectional processing
+                    'bidirectional': cfg.model.get('bidirectional', True),  # Optional bidirectional processing
                     'verbose': cfg.verbose
                 }
                 return LiquidNetwork(**model_config)
