@@ -10,7 +10,7 @@ hydra:
 seed: 42
 verbose: false
 num_folds: 5
-test_mode: true
+test_mode: false
 experiment_name: "handwriting_analysis"
 device: "cuda"
 
@@ -39,16 +39,16 @@ data:
     task: "Task_ID"
 
 training:
-  max_epochs: 1
+  max_epochs: 100
   learning_rate: 0.0001
   weight_decay: 0.00005
   early_stopping_patience: 30
   gradient_clip_val: 0.4
 
 model:
-  type: "transformer"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn", "hatnet", transformer
-  hidden_size: 256 # 128 (per transformer: 256 )
-  num_layers: 6 # 2 (per transformer: 6 )
+  type: "rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn", "hatnet", transformer
+  hidden_size: 128 # 128 (per transformer: 256 )
+  num_layers: 2 # 2 (per transformer: 6 )
   task_embedding_dim: 32
   dropout: 0.3
   embedding_dropout: 0.1

@@ -85,8 +85,8 @@ class SimpleLiquidCell(nn.Module):
 class LiquidNetwork(BaseModel):
     """Liquid Neural Network for handwriting analysis.
     
-    This model implements a streamlined version of Liquid Neural Networks
-    that focuses on computational efficiency while preserving the adaptive
+    This model implements a Liquid Neural Networks that focuses on computational 
+    efficiency while preserving the adaptive
     time-constant dynamics that make LNNs valuable for sequential data.
     """
     def __init__(
