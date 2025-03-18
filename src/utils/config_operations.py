@@ -12,7 +12,7 @@ class ConfigOperations:
         def convert_value(key: str, value: str) -> Any:
             if value is None:
                 return None
-            if key in ["SEED", "NUM_FOLDS", "BATCH_SIZE", "MAX_EPOCHS", "EARLY_STOPPING_PATIENCE"]:
+            if key in ["SEED", "NUM_FOLDS", "BATCH_SIZE", "MAX_EPOCHS", "EARLY_STOPPING_PATIENCE", "HIDDEN_SIZE", "NUM_LAYERS"]:
                 return int(value)
             elif key in ["LEARNING_RATE", "WEIGHT_DECAY", "GRADIENT_CLIP_VAL"]:
                 return float(value)
@@ -35,6 +35,8 @@ class ConfigOperations:
             "data.yaml_split_path": os.getenv("YAML_SPLIT_PATH"),
             "data.enable_augmentation": convert_value("ENABLE_AUGMENTATION", os.getenv("ENABLE_AUGMENTATION")),  # ✅ Added this
             "model.type": os.getenv("MODEL_TYPE"),
+            "model.hidden_size": convert_value("HIDDEN_SIZE", os.getenv("HIDDEN_SIZE")),  # 128 (per transformer: 256)
+            "model.num_layers": convert_value("NUM_LAYERS", os.getenv("NUM_LAYERS")),  # 2 (per transformer: 6)
             "training.max_epochs": convert_value("MAX_EPOCHS", os.getenv("MAX_EPOCHS")),
             "training.learning_rate": convert_value("LEARNING_RATE", os.getenv("LEARNING_RATE")),
             "training.weight_decay": convert_value("WEIGHT_DECAY", os.getenv("WEIGHT_DECAY")),
@@ -91,6 +93,8 @@ class ConfigOperations:
             f"  Enable Augmentation: {format_value('data.enable_augmentation', config.data.enable_augmentation)}\n\n"  # ✅ Added this line
             f"[yellow]Training Settings:[/]\n"
             f"  Model Type: {format_value('model.type', config.model.type)}\n"
+            f"  Hidden Size: {format_value('model.hidden_size', config.model.hidden_size)}\n"
+            f"  Num Layers: {format_value('model.num_layers', config.model.num_layers)}\n"
             f"  Max Epochs: {format_value('training.max_epochs', config.training.max_epochs)}\n"
             f"  Learning Rate: {format_value('training.learning_rate', config.training.learning_rate)}\n"
             f"  Weight Decay: {format_value('training.weight_decay', config.training.weight_decay)}\n"
