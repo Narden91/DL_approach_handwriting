@@ -111,4 +111,5 @@ wandb_cache
 k8s_manifest
 .codegpt
 
+manuscript/
 results/
