@@ -323,6 +323,9 @@ class HandwritingDataModule(pl.LightningDataModule):
         self.n_folds = n_folds
         self.seed = seed
         self.yaml_split_path = yaml_split_path
+
+        # Will be fitted during `setup(stage="fit")` and reused for val/test.
+        self._normalizer: Optional[DataNormalizer] = None
         
         # Will be initialized in setup()
         self.feature_cols = None
@@ -364,8 +367,18 @@ class HandwritingDataModule(pl.LightningDataModule):
         
         # Update column names
         label_col = 'Label_encoded' if 'Label' in data.columns else self.column_names['label']
-        
-        # Set multi-index
+
+        # IMPORTANT: enforce a stable, contiguous ordering so window slicing via
+        # `start_idx : start_idx + window_len` is valid for each (subject, task).
+        # Without this, indices for a given subject/task can be interleaved and
+        # windows may pull unrelated rows.
+        sort_cols = [self.column_names['id'], self.column_names['task'], self.column_names['segment']]
+        # Only sort by columns that exist (robustness across datasets)
+        sort_cols = [c for c in sort_cols if c in data.columns]
+        if sort_cols:
+            data = data.sort_values(sort_cols, kind="mergesort")
+
+        # Set multi-index AFTER sorting
         data.set_index([self.column_names['id'], self.column_names['segment']], inplace=True)
         
         # Define feature columns (exclude non-features)
@@ -428,6 +441,9 @@ class HandwritingDataModule(pl.LightningDataModule):
             normalizer = DataNormalizer(self.config.scaler_type)
             train_features = normalizer.fit_transform(features[train_idx])
             val_features = normalizer.transform(features[val_idx])
+
+            # Persist fitted scaler for test-time transform
+            self._normalizer = normalizer
             
             # Create datasets
             self.train_dataset = FastHandwritingDataset(
@@ -455,12 +471,14 @@ class HandwritingDataModule(pl.LightningDataModule):
             )
         
         if stage == "test" or stage is None:
-            # Reuse normalizer from training if available
-            if hasattr(self, 'train_dataset') and self.train_dataset is not None:
-                test_features = features[test_idx]  # Already normalized
-            else:
+            # Always normalize test using the training-fitted scaler (no leakage).
+            # If setup("test") is called without a prior setup("fit"), fit on train split.
+            if self._normalizer is None:
                 normalizer = DataNormalizer(self.config.scaler_type)
-                test_features = normalizer.fit_transform(features[test_idx])
+                _ = normalizer.fit_transform(features[train_idx])
+                self._normalizer = normalizer
+
+            test_features = self._normalizer.transform(features[test_idx])
             
             self.test_dataset = FastHandwritingDataset(
                 features=test_features,
