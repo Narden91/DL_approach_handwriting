@@ -205,16 +205,9 @@ class HandwritingDataset(Dataset):
         else:
             mask = torch.ones(self.window_size)
 
-        # Window normalization
-        window_mean = np.nanmean(features_window, axis=0)
-        window_std = np.nanstd(features_window, axis=0) + 1e-8
-        features_window = (features_window - window_mean) / window_std
-
         # Apply augmentation if training
         if self.train and self.augmentor:
             features_window = self.augmentor.apply(features_window)
-        
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         return (
             torch.FloatTensor(features_window),

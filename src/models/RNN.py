@@ -133,8 +133,8 @@ class RNN(BaseModel):
         if layer_norm:
             self.feature_norm = nn.LayerNorm(input_size)
         
-        # Task embedding
-        self.task_embedding = nn.Embedding(num_tasks+1, task_embedding_dim)
+        # Task embedding (task IDs are 1-indexed, so we subtract 1 during forward)
+        self.task_embedding = nn.Embedding(num_tasks, task_embedding_dim)
         
         # Combine feature dimensions with task embeddings
         rnn_input_size = input_size + task_embedding_dim
@@ -152,6 +152,10 @@ class RNN(BaseModel):
         
         # Output size considering bidirectionality
         output_size = hidden_size * 2 if bidirectional else hidden_size
+        
+        # Residual projection to match dimensions if residual connections enabled
+        if residual:
+            self.residual_projection = nn.Linear(rnn_input_size, output_size)
         
         # Dropout for regularization
         self.dropout = nn.Dropout(dropout)
@@ -219,17 +223,19 @@ class RNN(BaseModel):
             x = self.input_norm(x)
             x = x.reshape(original_shape)
         
-        # Create identity connection for residual if enabled
-        if self.residual:
-            identity = x
-        
-        # Process task embeddings
+        # Process task embeddings (task IDs are 1-indexed, adjust to 0-indexed)
         task_ids = task_ids.squeeze(-1)
+        # Clamp to valid range and subtract 1 to convert from 1-indexed to 0-indexed
+        task_ids = torch.clamp(task_ids, 1, self.task_embedding.num_embeddings) - 1
         task_emb = self.task_embedding(task_ids)
         task_emb = task_emb.unsqueeze(1).expand(-1, seq_len, -1)
         
         # Combine features with task embeddings
         x = torch.cat([x, task_emb], dim=-1)
+        
+        # Create identity connection for residual if enabled (after concatenation)
+        if self.residual:
+            identity = x
         
         if self.verbose:
             self.debugger.check_tensor(x, "Combined input", "Forward")
@@ -245,8 +251,10 @@ class RNN(BaseModel):
             self.debugger.check_tensor(outputs, "RNN output", "Forward")
         
         # Apply residual connection if enabled
-        if self.residual and identity.size(-1) == outputs.size(-1):
-            outputs = outputs + identity
+        if self.residual:
+            # Project identity to match RNN output dimensions
+            identity_projected = self.residual_projection(identity)
+            outputs = outputs + identity_projected
         
         # Apply dropout
         outputs = self.dropout(outputs)
