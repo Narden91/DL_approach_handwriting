@@ -90,6 +90,10 @@ target/
 .pytest_cache/
 .ruff_cache/
 
+# uv
+.uv/
+uv.lock
+
 # Hydra logs
 outputs
 

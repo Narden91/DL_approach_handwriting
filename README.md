@@ -92,22 +92,63 @@ The model tracks multiple evaluation metrics:
 - Python 3.8+
 - PyTorch 2.0+
 - CUDA-capable GPU (recommended)
+- [uv](https://docs.astral.sh/uv/) - Modern Python package installer (recommended)
 
 ### Installation
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd handwriting-analysis
+#### Quick Setup (Recommended)
 
-# Install dependencies
+Using [uv](https://github.com/astral-sh/uv) - 10-100x faster than pip:
+
+```bash
+# Install uv
+# Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Linux/macOS: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Automated setup (Windows)
+.\setup_env.ps1
+
+# Automated setup (Linux/macOS)
+./setup_env.sh
+```
+
+#### Manual Setup
+
+```bash
+# Using uv (recommended)
+uv venv                                    # Create environment
+.venv\Scripts\Activate.ps1                 # Activate (Windows)
+source .venv/bin/activate                  # Activate (Linux/macOS)
+uv pip install -r requirements.txt         # Install dependencies
+
+# Using pip (traditional)
+python -m venv venv
+venv\Scripts\activate                      # Windows
+source venv/bin/activate                   # Linux/macOS
 pip install -r requirements.txt
 
-# Set up environment variables for S3 access
-export S3_ENDPOINT_URL=<your-endpoint>
-export AWS_ACCESS_KEY_ID=<your-access-key>
-export AWS_SECRET_ACCESS_KEY=<your-secret-key>
-export S3_BUCKET=<your-bucket-name>
+# Configure S3 (Windows)
+$env:S3_ENDPOINT_URL="<endpoint>"
+$env:AWS_ACCESS_KEY_ID="<key>"
+$env:AWS_SECRET_ACCESS_KEY="<secret>"
+$env:S3_BUCKET="<bucket>"
+
+# Configure S3 (Linux/macOS)
+export S3_ENDPOINT_URL=<endpoint>
+export AWS_ACCESS_KEY_ID=<key>
+export AWS_SECRET_ACCESS_KEY=<secret>
+export S3_BUCKET=<bucket>
+```
+
+#### Common uv Commands
+
+```bash
+uv pip install <package>                   # Install package
+uv pip install --upgrade -r requirements.txt  # Upgrade all
+uv pip compile requirements.txt -o requirements.lock  # Create lockfile
+uv pip sync requirements.lock              # Install from lockfile
+uv pip list                                # List packages
+uv cache clean                             # Clear cache
 ```
 
 ### Running the Training Pipeline
@@ -153,7 +194,23 @@ training:
   weight_decay: 0.00005
 ```
 
-## 👥 Contributors
+## �️ Development
+
+```bash
+# Code formatting
+black . && isort .
+
+# Type checking and linting
+mypy src/ && flake8 src/
+
+# Run tests
+pytest
+
+# Install dev tools
+uv pip install black isort pytest mypy flake8
+```
+
+## �👥 Contributors
 
 - [@Narden91](https://github.com/Narden91)
 
