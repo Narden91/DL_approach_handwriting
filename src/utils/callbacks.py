@@ -22,6 +22,8 @@ class ThresholdTuner(pl.Callback):
         super().__init__()
         self.val_preds = []
         self.val_labels = []
+        # Reusable metric instances to avoid overhead
+        self.metrics = None
 
     def on_validation_batch_end(
             self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0
@@ -46,6 +48,17 @@ class ThresholdTuner(pl.Callback):
         # Ensure everything is on the same device
         device = pl_module.device
 
+        # Initialize reusable metrics on first call
+        if self.metrics is None:
+            self.metrics = {
+                'accuracy': Accuracy(task='binary', num_classes=2).to(device),
+                'precision': Precision(task='binary', num_classes=2).to(device),
+                'recall': Recall(task='binary', num_classes=2).to(device),
+                'specificity': Specificity(task='binary').to(device),
+                'f1': F1Score(task='binary').to(device),
+                'mcc': MatthewsCorrCoef(task='binary').to(device)
+            }
+
         # Concatenate all predictions and labels
         all_preds = torch.cat([x.to(device) for x in self.val_preds])
         all_labels = torch.cat([x.to(device) for x in self.val_labels])
@@ -58,15 +71,11 @@ class ThresholdTuner(pl.Callback):
         for threshold in torch.linspace(0.1, 0.9, 81, device=device):
             binary_preds = (all_preds > threshold).float()
 
-            # Calculate metrics
-            metrics = {
-                'accuracy': Accuracy(task='binary', num_classes=2).to(device)(binary_preds, all_labels).item(),
-                'precision': Precision(task='binary', num_classes=2).to(device)(binary_preds, all_labels).item(),
-                'recall': Recall(task='binary', num_classes=2).to(device)(binary_preds, all_labels).item(),
-                'specificity': Specificity(task='binary').to(device)(binary_preds, all_labels).item(),
-                'f1': F1Score(task='binary').to(device)(binary_preds, all_labels).item(),
-                'mcc': MatthewsCorrCoef(task='binary').to(device)(binary_preds, all_labels).item()
-            }
+            # Calculate metrics using reusable instances
+            metrics = {}
+            for name, metric in self.metrics.items():
+                metric.reset()
+                metrics[name] = metric(binary_preds, all_labels).item()
 
             # Use F1 score for threshold selection
             if metrics['f1'] > best_f1:

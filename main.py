@@ -48,8 +48,9 @@ def set_global_seed(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    # Allow cudnn to use faster algorithms (non-deterministic but faster)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
     pl.seed_everything(seed)
 
 
@@ -129,22 +130,22 @@ def configure_training(config: DictConfig) -> Tuple[Dict[str, Any], Optional[Wan
     # Get precision from config, fallback to 32
     precision = config.gpu_settings.get("precision", 32) if hasattr(config, "gpu_settings") else 32
 
+    # Only include GradientMonitorCallback in verbose/debug mode
+    callbacks = [early_stopping, progress_bar, threshold_tuner]
+    if config.verbose:
+        callbacks.append(GradientMonitorCallback())
+    
     trainer_config = {
         "accelerator": accelerator,
         "devices": devices,
         "max_epochs": config.training.max_epochs,
         "gradient_clip_val": config.training.gradient_clip_val,
-        "callbacks": [
-            early_stopping,
-            progress_bar,
-            threshold_tuner,
-            GradientMonitorCallback()
-        ],
+        "callbacks": callbacks,
         "logger": wandb_logger if wandb_logger is not None else False,
         "log_every_n_steps": 10,
-        "val_check_interval": 0.5,
+        "val_check_interval": 1.0,
         "enable_checkpointing": False,
-        "deterministic": True,
+        "deterministic": False,
         "precision": precision
     }
     
