@@ -12,13 +12,29 @@ class BalancedBatchSampler(Sampler):
         self.batch_size = batch_size
         self.num_samples = len(dataset)
 
-        # Get indices for each class
+        # Get indices for each class (ultra-fast with new dataset structure)
         self.label_to_indices = defaultdict(list)
 
-        # Collect indices for each class
-        for idx in range(len(dataset)):
-            _, label, _, _ = dataset[idx]
-            self.label_to_indices[label.item()].append(idx)
+        # Optimized: Use pre-computed arrays from FastHandwritingDataset
+        if hasattr(dataset, 'labels') and hasattr(dataset, 'windows'):
+            # Ultra-fast path: directly access labels array and window start indices
+            for idx in range(len(dataset.windows)):
+                start_idx = dataset.windows[idx, 3]  # start_index is 4th column
+                label = int(dataset.labels[start_idx])
+                self.label_to_indices[label].append(idx)
+        elif hasattr(dataset, 'labels_array') and hasattr(dataset, 'windows'):
+            # Fast path: use numpy array and window indices (legacy compatibility)
+            for idx, (_, _, _, window_indices) in enumerate(dataset.windows):
+                if isinstance(window_indices, np.ndarray):
+                    label = int(dataset.labels_array[window_indices[0]])
+                else:
+                    label = int(dataset.labels_array[window_indices])
+                self.label_to_indices[label].append(idx)
+        else:
+            # Fallback: iterate through dataset (slow but compatible)
+            for idx in range(len(dataset)):
+                _, label, _, _ = dataset[idx]
+                self.label_to_indices[label.item()].append(idx)
 
         # Store number of samples per class
         self.count_per_class = {
