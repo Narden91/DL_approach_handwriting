@@ -126,12 +126,12 @@ class RNN(BaseModel):
         self.residual = residual
         self.debugger = RNNDebugger()
         
-        # Input normalization - using BatchNorm1d for time series data
-        self.input_norm = nn.BatchNorm1d(input_size)
-        
-        # Layer normalization if enabled
+        # Layer normalization (better for RNNs than BatchNorm)
         if layer_norm:
             self.feature_norm = nn.LayerNorm(input_size)
+        else:
+            # Fallback to BatchNorm for compatibility
+            self.input_norm = nn.BatchNorm1d(input_size)
         
         # Task embedding (task IDs are 1-indexed, so we subtract 1 during forward)
         self.task_embedding = nn.Embedding(num_tasks, task_embedding_dim)
@@ -210,18 +210,16 @@ class RNN(BaseModel):
         # Get tensor dimensions
         batch_size, seq_len, feature_dim = x.size()
         
-        # Preprocessing and normalization
-        x = torch.where(torch.isnan(x), torch.zeros_like(x), x)
-        x = torch.clamp(x, -10, 10)  # Prevent extreme values
+        # Preprocessing: handle NaN/Inf, then clip all values
+        x = torch.nan_to_num(x, nan=0.0, posinf=10.0, neginf=-10.0)
+        x = torch.clamp(x, -10, 10)
         
-        # Apply normalization - properly reshaping for BatchNorm1d
+        # Apply normalization
         if self.layer_norm:
             x = self.feature_norm(x)
         else:
-            original_shape = x.shape
-            x = x.reshape(-1, feature_dim)
-            x = self.input_norm(x)
-            x = x.reshape(original_shape)
+            # BatchNorm requires reshape: (B, T, F) -> (B*T, F) -> (B, T, F)
+            x = self.input_norm(x.reshape(-1, feature_dim)).reshape(batch_size, seq_len, feature_dim)
         
         # Process task embeddings (task IDs are 1-indexed, adjust to 0-indexed)
         task_ids = task_ids.squeeze(-1)
