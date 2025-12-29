@@ -2,16 +2,18 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import torch.nn as nn
 from rich import print as rprint
-from src.models.GRU import GRU
-from src.models.LSTM import LSTM
-from src.models.XLSTM import XLSTM
-from src.models.hat_net import HATNet
-from src.models.simpleRNN import SimpleRNN
-from src.models.RNN import RNN
-from src.models.attention_RNN import AttentionRNN
-from src.models.han import HandwritingHAN
-from src.models.liquid_neural_net import LiquidNetwork
-from src.models.transformer_model import PretrainedTransformerModel
+from src.models import (
+    RNN, 
+    LSTM, 
+    GRU, 
+    XLSTM, 
+    HATNet, 
+    SimpleRNN, 
+    AttentionRNN, 
+    HandwritingHAN, 
+    LiquidNetwork, 
+    PretrainedTransformerModel
+)
 
 
 

@@ -1,7 +1,14 @@
 from datetime import datetime
 import sys
 sys.dont_write_bytecode = True
-from src.utils.wandb_utils import cleanup_wandb
+import warnings
+import logging
+
+# Suppress triton and other noisy warnings
+warnings.filterwarnings("ignore", message=".*triton.*")
+warnings.filterwarnings("ignore", message=".*LeafSpec.*")
+logging.getLogger("torch.utils.flop_counter").setLevel(logging.ERROR)
+
 import pandas as pd
 import hydra
 from omegaconf import DictConfig
@@ -13,15 +20,25 @@ from rich import print as rprint
 import random
 import numpy as np
 from pytorch_lightning.loggers import WandbLogger
-from src.utils.model_factory import ModelFactory
-from src.data.datamodule import DataConfig, HandwritingDataModule
-from src.utils.callbacks import GradientMonitorCallback, ThresholdTuner
+from typing import Dict, Any, Optional, Tuple, List
+
+from src.utils import (
+    cleanup_wandb, 
+    ModelFactory, 
+    GradientMonitorCallback, 
+    ThresholdTuner, 
+    ConfigOperations,
+    check_cuda_availability,
+    print_dataset_info,
+    print_feature_info,
+    print_subject_metrics,
+    process_metrics,
+    get_predictions,
+    compute_subject_metrics
+)
+from src.data import DataConfig, HandwritingDataModule
 from s3_operations.s3_handler import config
 from s3_operations.s3_io import S3IOHandler
-from src.utils.config_operations import ConfigOperations
-from src.utils.print_info import check_cuda_availability, print_dataset_info, print_feature_info, print_subject_metrics, \
-    process_metrics
-from src.utils.majority_vote import get_predictions, compute_subject_metrics
 from src.explainability.model_explainer import GradientModelExplainer
 
 
@@ -36,7 +53,7 @@ def set_global_seed(seed: int) -> None:
     pl.seed_everything(seed)
 
 
-def save_importance_data(s3_handler, importance_data, file_key_save, importance_type="feature"):
+def save_importance_data(s3_handler: S3IOHandler, importance_data: Dict[str, float], file_key_save: str, importance_type: str = "feature") -> None:
     """
     Save importance data to CSV via S3 using pre-defined file paths
     
@@ -70,10 +87,17 @@ def save_importance_data(s3_handler, importance_data, file_key_save, importance_
         rprint(f"[red]Error saving {importance_type} importance data: {str(e)}[/red]")
         
 
-def configure_training(config):
+def configure_training(config: DictConfig) -> Tuple[Dict[str, Any], Optional[WandbLogger]]:
     """Configure training with wandb logger and callbacks."""
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    # Detect accelerator based on availability
+    if torch.cuda.is_available():
+        accelerator = "cuda"
+        devices = 1
+        rprint(f"[green]Using CUDA accelerator with device: {torch.cuda.get_device_name(0)}[/green]")
+    else:
+        accelerator = "cpu"
+        devices = "auto"
+        rprint("[yellow]CUDA not available, using CPU[/yellow]")
 
     # Initialize callbacks
     progress_bar = pl.callbacks.progress.TQDMProgressBar(
@@ -92,17 +116,22 @@ def configure_training(config):
 
     try:
         # Initialize Wandb logger with error handling
+        # Removed anonymous parameter to avoid deprecation warning
         wandb_logger = WandbLogger(
             project="handwriting_analysis",
             name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
+            log_model=False # Avoid uploading models to wandb by default
         )
     except Exception as e:
         rprint(f"[yellow]Warning: Could not initialize WandB logger: {str(e)}. Continuing without logging...[/yellow]")
         wandb_logger = None
 
+    # Get precision from config, fallback to 32
+    precision = config.gpu_settings.get("precision", 32) if hasattr(config, "gpu_settings") else 32
+
     trainer_config = {
-        "accelerator": "gpu",
-        "devices": 1,
+        "accelerator": accelerator,
+        "devices": devices,
         "max_epochs": config.training.max_epochs,
         "gradient_clip_val": config.training.gradient_clip_val,
         "callbacks": [
@@ -116,13 +145,13 @@ def configure_training(config):
         "val_check_interval": 0.5,
         "enable_checkpointing": False,
         "deterministic": True,
-        "precision": config.gpu_settings.get("precision", 32)  
+        "precision": precision
     }
     
     return trainer_config, wandb_logger
 
 
-def safe_wandb_log(logger, metrics, epoch=None):
+def safe_wandb_log(logger: Optional[WandbLogger], metrics: Dict[str, Any], epoch: Optional[int] = None) -> None:
     """Safely log metrics to WandB with error handling."""
     if logger is not None:
         try:
@@ -139,6 +168,12 @@ def main(cfg: DictConfig) -> None:
     try:
         # Initialize configuration and set seeds
         cfg = ConfigOperations.merge_configurations(cfg)
+        
+        # Set CUDA_VISIBLE_DEVICES early, before any GPU operations
+        if hasattr(cfg, "gpu_settings") and "gpu_id" in cfg.gpu_settings:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu_settings.gpu_id)
+            os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        
         set_global_seed(cfg.seed)
         rprint("[bold blue]Starting Handwriting Analysis with 5-Fold Cross Validation[/bold blue]")
         check_cuda_availability(cfg.verbose)

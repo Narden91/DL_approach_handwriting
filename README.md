@@ -151,6 +151,33 @@ uv pip list                                # List packages
 uv cache clean                             # Clear cache
 ```
 
+#### GPU Setup (CUDA)
+
+⚠️ **Important**: If you have a CUDA-capable GPU, install PyTorch with CUDA support:
+
+```bash
+# Check CUDA version (if installed)
+nvidia-smi
+
+# Install PyTorch with CUDA 11.8 (most compatible)
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# For CUDA 12.1
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# For RTX 50-series (Blackwell) / CUDA 12.8+
+uv pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# CPU-only version (no GPU required)
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Verify GPU is available
+# Windows PowerShell:
+python -c "import torch; print('CUDA:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
+# Linux/macOS:
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU only\"}')"
+```
+
 ### Running the Training Pipeline
 
 ```bash
@@ -209,7 +236,41 @@ pytest
 # Install dev tools
 uv pip install black isort pytest mypy flake8
 ```
+## 🔧 Troubleshooting
 
+### Error: "No supported gpu backend found!"
+
+This means PyTorch can't find a GPU. Solutions:
+
+```bash
+# 1. Check if GPU is detected by system
+nvidia-smi
+
+# 2. Verify PyTorch installation
+python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA:', torch.cuda.is_available())"
+
+# 3. Reinstall PyTorch with CUDA support
+uv pip uninstall torch torchvision
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# 4. If no GPU available, run on CPU (edit config or use env var)
+python main.py trainer.accelerator=cpu
+
+# 5. Force reinstall if corrupted
+uv pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu118
+```
+
+### Common Issues
+
+**Slow installation**: Use `uv` instead of `pip` for 10-100x speedup
+
+**CUDA version mismatch**: Check your CUDA version with `nvidia-smi` and install matching PyTorch
+
+**Out of memory**: Reduce batch size in config: `python main.py data.batch_size=32`
+
+**Module not found**: Ensure virtual environment is activated and dependencies installed
+
+**S3 connection errors**: Verify S3 environment variables are set correctly
 ## �👥 Contributors
 
 - [@Narden91](https://github.com/Narden91)

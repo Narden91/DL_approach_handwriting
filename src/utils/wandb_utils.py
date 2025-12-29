@@ -1,8 +1,11 @@
+from typing import Any, Optional
 from rich import print as rprint
 import pytorch_lightning as pl
+from pytorch_lightning.loggers import WandbLogger
+from omegaconf import DictConfig
 
 
-def configure_wandb_logger(config, fold, window_size, stride):
+def configure_wandb_logger(config: DictConfig, fold: int, window_size: int, stride: int) -> Optional[WandbLogger]:
     """Configure WandB logger with proper cleanup between folds.
     
     Args:
@@ -21,7 +24,7 @@ def configure_wandb_logger(config, fold, window_size, stride):
             wandb.finish()
             
         # Initialize new wandb logger
-        wandb_logger = pl.loggers.WandbLogger(
+        wandb_logger = WandbLogger(
             project="handwriting_analysis",
             name=f"{config.model.type}_fold{fold+1}_ws{window_size}_str{stride}",
             group=f"{config.experiment_name}",
@@ -45,7 +48,7 @@ def configure_wandb_logger(config, fold, window_size, stride):
         rprint(f"[yellow]Warning: Could not initialize WandB logger: {str(e)}. Continuing without logging...[/yellow]")
         return None
 
-def cleanup_wandb():
+def cleanup_wandb() -> None:
     """Cleanup WandB run after training completion."""
     try:
         import wandb

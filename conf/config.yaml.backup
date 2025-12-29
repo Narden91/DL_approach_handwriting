@@ -1,4 +1,4 @@
-﻿defaults:  
+defaults:  
   - _self_  
   - override hydra/hydra_logging: disabled  
   - override hydra/job_logging: disabled  
@@ -15,7 +15,7 @@ experiment_name: "handwriting_analysis"
 device: "cuda"
 
 data:
-  enable_augmentation: false
+  enable_augmentation: false  # Set to false to disable augmentation
   data_dir: "C:/Users/Emanuele/Documents/ProgettiPython/DL_approach_handwriting/data/raw"
   yaml_split_filename: "split_config.yaml"
   config_path: "conf"
@@ -46,9 +46,14 @@ training:
   gradient_clip_val: 0.4
 
 model:
-  type: "rnn"
-  hidden_size: 128
-  num_layers: 2
+  type: "rnn"  # Options: "rnn" or "lstm" or "gru" or "xlstm" or "simpleRNN" or "attention_rnn", "han", "lnn", "hatnet", transformer
+  hidden_size: 128 # 128 (per transformer: 256 )
+
+gpu_settings:
+  precision: 32
+  devices: [0]
+  accelerator: "gpu"
+  num_layers: 2 # 2 (per transformer: 6 )
   task_embedding_dim: 32
   dropout: 0.3
   embedding_dropout: 0.1
@@ -71,7 +76,7 @@ model:
     n_heads: 8
   han_specific:
     attention_dim: 64
-    num_heads: 8
+    num_heads: 8  # For multi-head attention if needed
     use_layer_norm: true
     feature_dropout: 0.2
     attention_dropout: 0.1
@@ -86,9 +91,7 @@ model:
     freeze_base: false
   
 gpu_settings:
-  gpu_id: 0
-  precision: 32
-  devices: [0]
-  accelerator: "cuda"  # Use "cuda" for GPU, "cpu" for CPU
+  gpu_id: 0  # Specify which GPU to use
+  precision: 32  
 
 version_base: "1.1"
