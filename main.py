@@ -153,14 +153,19 @@ def configure_training(config: DictConfig) -> Tuple[Dict[str, Any], Optional[Wan
 
 
 def safe_wandb_log(logger: Optional[WandbLogger], metrics: Dict[str, Any], epoch: Optional[int] = None) -> None:
-    """Safely log metrics to WandB with error handling."""
+    """Safely log metrics to WandB with error handling and minimal overhead."""
     if logger is not None:
         try:
             if epoch is not None:
                 metrics['epoch'] = epoch
-            logger.log_metrics(metrics)
+            # Use experiment.log for async logging (lower overhead)
+            if hasattr(logger, 'experiment'):
+                logger.experiment.log(metrics)
+            else:
+                logger.log_metrics(metrics)
         except Exception as e:
-            rprint(f"[yellow]Warning: Failed to log metrics to WandB: {str(e)}[/yellow]")
+            # Silently handle errors to avoid cluttering output
+            pass
 
 
 @hydra.main(version_base="1.1", config_path="./conf", config_name="config")

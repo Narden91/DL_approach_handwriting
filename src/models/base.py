@@ -74,10 +74,6 @@ class BaseModel(pl.LightningModule):
         self.val_metrics = None
         self.test_metrics = None
         
-        # Track predictions and labels for analysis
-        self.training_step_outputs = []
-        self.validation_step_outputs = []
-        
     def setup(self, stage: Optional[str] = None) -> None:
         """Initialize metrics on the correct device during setup."""
         if self.train_metrics is None:
@@ -146,12 +142,6 @@ class BaseModel(pl.LightningModule):
         metrics = self.train_metrics.update(preds, labels)
         self.log_dict(metrics, prog_bar=True, on_step=False, on_epoch=True)
         
-        self.training_step_outputs.append({
-            'loss': loss,
-            'preds': preds.detach(),
-            'labels': labels.detach()
-        })
-        
         return loss
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, torch.Tensor]:
@@ -172,14 +162,11 @@ class BaseModel(pl.LightningModule):
         metrics = self.val_metrics.update(preds, labels)
         self.log_dict(metrics, prog_bar=True, on_step=False, on_epoch=True)
         
-        output = {
+        return {
             'loss': loss,
             'preds': preds.detach(),
             'labels': labels.detach()
         }
-        
-        self.validation_step_outputs.append(output)
-        return output
     
     def configure_optimizers(self) -> Dict[str, Any]:
         """Configure optimizer and learning rate scheduler."""
