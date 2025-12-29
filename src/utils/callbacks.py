@@ -13,8 +13,9 @@ class GradientMonitorCallback(pl.Callback):
                 total_norm += param_norm.item() ** 2
         total_norm = total_norm ** 0.5
 
-        if total_norm > 10:
-            trainer.logger.experiment.log({"gradient_norm": total_norm})
+        # Intentionally do not log to WandB to keep tracking minimal.
+        # (If you need this again, re-enable behind a config flag.)
+        return
 
 
 class ThresholdTuner(pl.Callback):
@@ -86,10 +87,8 @@ class ThresholdTuner(pl.Callback):
         # Update model's threshold
         pl_module.optimal_threshold = best_threshold
 
-        # Log metrics with best threshold
-        pl_module.log('best_threshold', best_threshold)
-        for name, value in best_metrics.items():
-            pl_module.log(f'best_val_{name}', value)
+        # Do not log threshold/extra metrics to the experiment tracker.
+        # (Keeps WandB clean: only loss/accuracy/lr.)
 
         # Clear collected predictions
         self.val_preds.clear()

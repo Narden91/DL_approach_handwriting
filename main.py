@@ -113,7 +113,7 @@ def configure_training(config: DictConfig) -> Tuple[Dict[str, Any], Optional[Wan
     )
 
     early_stopping = EarlyStopping(
-        monitor="val_f1",
+        monitor="val_acc",
         patience=config.training.early_stopping_patience,
         mode="max",
         verbose=True
@@ -129,6 +129,15 @@ def configure_training(config: DictConfig) -> Tuple[Dict[str, Any], Optional[Wan
             name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
             log_model=False # Avoid uploading models to wandb by default
         )
+
+        # Keep WandB clean: hide Lightning's internal global_step series.
+        # Note: this won't remove it from the history table, but it prevents clutter in charts.
+        try:
+            if hasattr(wandb_logger, "experiment"):
+                wandb_logger.experiment.define_metric("trainer/global_step", hidden=True)
+        except Exception:
+            pass
+
     except Exception as e:
         rprint(f"[yellow]Warning: Could not initialize WandB logger: {str(e)}. Continuing without logging...[/yellow]")
         wandb_logger = None
@@ -314,7 +323,7 @@ def main(cfg: DictConfig) -> None:
                             test_subjects, test_labels, test_preds, cfg.verbose
                         )
 
-                        # Store metrics for this fold
+                        # Store metrics for this fold (for CSV/console). Do not log to WandB.
                         metrics = {
                             'window_size': window_size,
                             'stride': stride,
@@ -332,9 +341,6 @@ def main(cfg: DictConfig) -> None:
                             'test_subject_f1': test_subject_metrics['subject_f1'],
                             'test_subject_mcc': test_subject_metrics['subject_mcc'],
                         }
-
-                        # Log metrics to wandb
-                        safe_wandb_log(wandb_logger, metrics, trainer.current_epoch)
 
                         # Store metrics
                         fold_metrics.append(metrics)

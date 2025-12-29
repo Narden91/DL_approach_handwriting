@@ -199,10 +199,10 @@ def print_predictions(subjects, labels, preds, fold, set_type):
 def print_fold_completion(fold, trainer):
     """Print fold completion details."""
     rprint(f"\n[bold cyan]Fold {fold + 1}/5 completed![/bold cyan]")
-    rprint(f"Validation Loss: {trainer.callback_metrics['val_loss']:.4f}")
-    rprint(f"Validation Accuracy: {trainer.callback_metrics['val_acc']:.4f}")
-    rprint(f"Validation F1 Score: {trainer.callback_metrics['val_f1']:.4f}")
-    rprint(f"Validation MCC: {trainer.callback_metrics['val_mcc']:.4f}")
+    if 'val_loss' in trainer.callback_metrics:
+        rprint(f"Validation Loss: {trainer.callback_metrics['val_loss']:.4f}")
+    if 'val_acc' in trainer.callback_metrics:
+        rprint(f"Validation Accuracy: {trainer.callback_metrics['val_acc']:.4f}")
     
 
 def print_subject_metrics(train_metrics, test_metrics, fold, verbose=True):

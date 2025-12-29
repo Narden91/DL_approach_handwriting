@@ -137,10 +137,16 @@ class BaseModel(pl.LightningModule):
         logits = self(features, task_ids, masks)
         loss = self.weighted_binary_cross_entropy(logits, labels)
         preds = torch.sigmoid(logits)
-        
-        # Update metrics (they are already on the correct device)
-        metrics = self.train_metrics.update(preds, labels)
-        self.log_dict(metrics, prog_bar=True, on_step=False, on_epoch=True)
+
+        # Minimal logging policy:
+        # - Only log (to WandB) val_loss, val_acc, lr
+        # - Keep train loss/acc on progress bar only (logger=False)
+        with torch.no_grad():
+            binary_preds = (preds > self.optimal_threshold).float()
+            acc = (binary_preds == labels.float()).float().mean()
+
+        self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True, logger=False)
+        self.log("train_acc", acc, prog_bar=True, on_step=False, on_epoch=True, logger=False)
         
         return loss
 
@@ -157,16 +163,31 @@ class BaseModel(pl.LightningModule):
         logits = self(features, task_ids, masks)
         loss = self.weighted_binary_cross_entropy(logits, labels)
         preds = torch.sigmoid(logits)
-        
-        # Update metrics (they are already on the correct device)
-        metrics = self.val_metrics.update(preds, labels)
-        self.log_dict(metrics, prog_bar=True, on_step=False, on_epoch=True)
+
+        # Log only validation loss/accuracy to the logger
+        with torch.no_grad():
+            binary_preds = (preds > self.optimal_threshold).float()
+            acc = (binary_preds == labels.float()).float().mean()
+
+        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True, logger=True)
+        self.log("val_acc", acc, prog_bar=True, on_step=False, on_epoch=True, logger=True)
         
         return {
             'loss': loss,
             'preds': preds.detach(),
             'labels': labels.detach()
         }
+
+    def on_train_epoch_end(self) -> None:
+        """Log a single optimization metric (learning rate) once per epoch."""
+        try:
+            if self.trainer is None or not getattr(self.trainer, "optimizers", None):
+                return
+            lr = float(self.trainer.optimizers[0].param_groups[0]["lr"])
+            self.log("lr", lr, prog_bar=False, on_step=False, on_epoch=True, logger=True)
+        except Exception:
+            # Never fail training due to logging
+            return
     
     def configure_optimizers(self) -> Dict[str, Any]:
         """Configure optimizer and learning rate scheduler."""
@@ -189,7 +210,7 @@ class BaseModel(pl.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "val_f1",
+                "monitor": "val_acc",
                 "frequency": 1
             }
         }

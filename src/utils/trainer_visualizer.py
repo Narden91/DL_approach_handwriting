@@ -32,8 +32,6 @@ class TrainingVisualizer(Callback):
         metrics = trainer.callback_metrics
         val_loss = metrics.get('val_loss', 0).item()
         val_acc = metrics.get('val_acc', 0).item()
-        val_f1 = metrics.get('val_f1', 0).item()
-        val_mcc = metrics.get('val_mcc', 0).item()
         
         self.val_losses.append(val_loss)
         self.val_accs.append(val_acc)
@@ -41,7 +39,7 @@ class TrainingVisualizer(Callback):
         self.current_epoch += 1
         
         # self._update_plot()
-        # self._print_metrics("Validation", val_loss, val_acc, val_f1, val_mcc)
+        # self._print_metrics("Validation", val_loss, val_acc)
         
     def _print_metrics(self, phase, loss, acc, f1=None, mcc=None):
         table = Table(show_header=True, header_style="bold magenta")
