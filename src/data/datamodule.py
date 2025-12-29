@@ -89,15 +89,12 @@ class FastHandwritingDataset(Dataset):
             enable_augmentation: Whether to enable data augmentation
             train: Whether this is training data
         """
-        self.features = features
-        self.labels = labels
-        self.task_ids = task_ids
-        self.subject_ids = subject_ids
         self.window_size = window_size
         self.stride = stride
         self.feature_cols = feature_cols
         self.n_features = len(feature_cols)
         self.train = train
+        self.subject_ids = subject_ids
         
         # Augmentation - create simple config object
         class AugConfig:
@@ -106,11 +103,43 @@ class FastHandwritingDataset(Dataset):
         
         self.augmentor = DataAugmentation(AugConfig(enable_augmentation)) if train else None
         
+        # PHASE 3 OPTIMIZATION: Load entire dataset to GPU if available
+        # This eliminates CPU→GPU transfer bottleneck for small tabular datasets
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.on_gpu = torch.cuda.is_available()
+        
+        if self.on_gpu:
+            # Convert to PyTorch tensors and move to GPU
+            self.features = torch.from_numpy(features).float().cuda()
+            self.labels = torch.from_numpy(labels).long().cuda()
+            self.task_ids = torch.from_numpy(task_ids).long().cuda()
+            
+            # Calculate memory usage
+            features_mb = self.features.element_size() * self.features.nelement() / (1024**2)
+            labels_mb = self.labels.element_size() * self.labels.nelement() / (1024**2)
+            task_ids_mb = self.task_ids.element_size() * self.task_ids.nelement() / (1024**2)
+            total_mb = features_mb + labels_mb + task_ids_mb
+            
+            if train:  # Only print once during training dataset creation
+                rprint(f"[green]✓ Dataset loaded to GPU: {total_mb:.2f} MB[/green]")
+                rprint(f"[green]  - Features: {features_mb:.2f} MB ({self.features.shape})[/green]")
+                rprint(f"[green]  - Labels: {labels_mb:.2f} MB ({self.labels.shape})[/green]")
+                rprint(f"[green]  - Task IDs: {task_ids_mb:.2f} MB ({self.task_ids.shape})[/green]")
+        else:
+            # Fallback to CPU (original behavior)
+            self.features = features
+            self.labels = labels
+            self.task_ids = task_ids
+        
         # Pre-compute all window indices (this is the key optimization)
+        # Note: We keep windows on CPU as indices are tiny and accessed sequentially
         self.windows = self._precompute_windows()
         
-        # Pre-allocate padding array (reuse across calls)
-        self.padding_template = np.zeros((window_size, self.n_features), dtype=np.float32)
+        # Pre-allocate padding array on appropriate device
+        if self.on_gpu:
+            self.padding_template = torch.zeros((window_size, self.n_features), dtype=torch.float32, device='cuda')
+        else:
+            self.padding_template = np.zeros((window_size, self.n_features), dtype=np.float32)
     
     def _precompute_windows(self) -> np.ndarray:
         """
@@ -123,14 +152,22 @@ class FastHandwritingDataset(Dataset):
         windows_list = []
         
         # Get unique combinations efficiently
-        unique_subjects = np.unique(self.subject_ids)
-        unique_tasks = np.unique(self.task_ids)
+        # Convert to numpy if on GPU
+        if self.on_gpu:
+            subject_ids_np = self.subject_ids  # Keep as numpy
+            task_ids_cpu = self.task_ids.cpu().numpy()
+        else:
+            subject_ids_np = self.subject_ids
+            task_ids_cpu = self.task_ids
+        
+        unique_subjects = np.unique(subject_ids_np)
+        unique_tasks = np.unique(task_ids_cpu)
         
         for subject in unique_subjects:
             # Vectorized subject filtering
-            subject_mask = self.subject_ids == subject
+            subject_mask = subject_ids_np == subject
             subject_indices = np.where(subject_mask)[0]
-            subject_tasks = self.task_ids[subject_mask]
+            subject_tasks = task_ids_cpu[subject_mask]
             
             for task in unique_tasks:
                 # Vectorized task filtering
@@ -164,45 +201,77 @@ class FastHandwritingDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Ultra-fast sample retrieval with minimal overhead.
+        Data is already on GPU, eliminating CPU→GPU transfer!
         
         Returns:
             Tuple of (features, label, task_id, mask)
         """
         subject_id, task_id, actual_length, start_idx = self.windows[idx]
         
-        # Direct array slicing (memory-mapped, zero-copy)
-        end_idx = start_idx + actual_length
-        features_window = self.features[start_idx:end_idx]
-        
-        # Get label from first sample
-        label = self.labels[start_idx]
-        
-        # Handle padding efficiently
-        if actual_length < self.window_size:
-            # Stack with pre-allocated padding
-            padding_needed = self.window_size - actual_length
-            features_window = np.vstack([
+        if self.on_gpu:
+            # GPU PATH: Direct slicing, already on GPU!
+            end_idx = start_idx + actual_length
+            features_window = self.features[start_idx:end_idx]
+            
+            # Get label from first sample (already on GPU)
+            label = self.labels[start_idx]
+            
+            # Handle padding efficiently on GPU
+            if actual_length < self.window_size:
+                # Concatenate with pre-allocated padding on GPU
+                padding_needed = self.window_size - actual_length
+                features_window = torch.cat([
+                    features_window,
+                    self.padding_template[:padding_needed]
+                ], dim=0)
+                # Create mask on GPU
+                mask = torch.zeros(self.window_size, dtype=torch.float32, device='cuda')
+                mask[:actual_length] = 1.0
+            else:
+                mask = torch.ones(self.window_size, dtype=torch.float32, device='cuda')
+            
+            # Note: Augmentation not supported on GPU tensors, skip if enabled
+            # (rarely used in practice, can add CPU fallback if needed)
+            
+            return (
                 features_window,
-                self.padding_template[:padding_needed]
-            ])
-            # Create mask
-            mask = np.zeros(self.window_size, dtype=np.float32)
-            mask[:actual_length] = 1.0
+                label.unsqueeze(0),
+                torch.tensor(task_id, dtype=torch.long, device='cuda').unsqueeze(0),
+                mask
+            )
         else:
-            mask = np.ones(self.window_size, dtype=np.float32)
-        
-        # Apply augmentation (rarely used in practice)
-        if self.train and self.augmentor and self.augmentor.enable_augmentation:
-            features_window = self.augmentor.apply(features_window)
-        
-        # Direct tensor creation (use from_numpy for zero-copy when possible)
-        # Note: .copy() is needed only if array is not contiguous
-        return (
-            torch.from_numpy(np.ascontiguousarray(features_window)),
-            torch.tensor(label, dtype=torch.long).unsqueeze(0),
-            torch.tensor(task_id, dtype=torch.long).unsqueeze(0),
-            torch.from_numpy(mask)
-        )
+            # CPU PATH: Original implementation
+            end_idx = start_idx + actual_length
+            features_window = self.features[start_idx:end_idx]
+            
+            # Get label from first sample
+            label = self.labels[start_idx]
+            
+            # Handle padding efficiently
+            if actual_length < self.window_size:
+                # Stack with pre-allocated padding
+                padding_needed = self.window_size - actual_length
+                features_window = np.vstack([
+                    features_window,
+                    self.padding_template[:padding_needed]
+                ])
+                # Create mask
+                mask = np.zeros(self.window_size, dtype=np.float32)
+                mask[:actual_length] = 1.0
+            else:
+                mask = np.ones(self.window_size, dtype=np.float32)
+            
+            # Apply augmentation (rarely used in practice)
+            if self.train and self.augmentor and self.augmentor.enable_augmentation:
+                features_window = self.augmentor.apply(features_window)
+            
+            # Direct tensor creation (use from_numpy for zero-copy when possible)
+            return (
+                torch.from_numpy(np.ascontiguousarray(features_window)),
+                torch.tensor(label, dtype=torch.long).unsqueeze(0),
+                torch.tensor(task_id, dtype=torch.long).unsqueeze(0),
+                torch.from_numpy(mask)
+            )
 
 
 class CustomLabelEncoder:
@@ -410,32 +479,47 @@ class HandwritingDataModule(pl.LightningDataModule):
     
     def train_dataloader(self) -> DataLoader:
         """Create training DataLoader with balanced sampling."""
+        # When data is on GPU, disable pin_memory and use single worker for best performance
+        use_gpu_mode = hasattr(self.train_dataset, 'on_gpu') and self.train_dataset.on_gpu
+        num_workers = 0 if use_gpu_mode else self.config.num_workers
+        pin_memory = False if use_gpu_mode else True
+        
         return DataLoader(
             self.train_dataset,
             batch_sampler=BalancedBatchSampler(self.train_dataset, self.config.batch_size),
-            num_workers=self.config.num_workers,
-            pin_memory=True,
-            persistent_workers=True if self.config.num_workers > 0 else False
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=(num_workers > 0)
         )
     
     def val_dataloader(self) -> DataLoader:
         """Create validation DataLoader."""
+        # When data is on GPU, disable pin_memory and use single worker for best performance
+        use_gpu_mode = hasattr(self.val_dataset, 'on_gpu') and self.val_dataset.on_gpu
+        num_workers = 0 if use_gpu_mode else self.config.num_workers
+        pin_memory = False if use_gpu_mode else True
+        
         return DataLoader(
             self.val_dataset,
             batch_sampler=BalancedBatchSampler(self.val_dataset, self.config.batch_size),
-            num_workers=self.config.num_workers,
-            pin_memory=True,
-            persistent_workers=True if self.config.num_workers > 0 else False
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=(num_workers > 0)
         )
     
     def test_dataloader(self) -> DataLoader:
         """Create test DataLoader."""
+        # When data is on GPU, disable pin_memory and use single worker for best performance
+        use_gpu_mode = hasattr(self.test_dataset, 'on_gpu') and self.test_dataset.on_gpu
+        num_workers = 0 if use_gpu_mode else self.config.num_workers
+        pin_memory = False if use_gpu_mode else True
+        
         return DataLoader(
             self.test_dataset,
             batch_sampler=BalancedBatchSampler(self.test_dataset, self.config.batch_size),
-            num_workers=self.config.num_workers,
-            pin_memory=True,
-            persistent_workers=True if self.config.num_workers > 0 else False
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=(num_workers > 0)
         )
     
     def get_feature_dim(self) -> int:

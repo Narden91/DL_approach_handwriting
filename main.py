@@ -7,6 +7,12 @@ import logging
 # Suppress triton and other noisy warnings
 warnings.filterwarnings("ignore", message=".*triton.*")
 warnings.filterwarnings("ignore", message=".*LeafSpec.*")
+# In GPU-preload mode we must use num_workers=0 (CUDA tensors can't be pinned/pickled),
+# so Lightning's generic "not many workers" warning becomes noise.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*The '.*_dataloader' does not have many workers.*",
+)
 logging.getLogger("torch.utils.flop_counter").setLevel(logging.ERROR)
 
 import pandas as pd
