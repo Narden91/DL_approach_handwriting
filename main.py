@@ -28,6 +28,15 @@ import numpy as np
 from pytorch_lightning.loggers import WandbLogger
 from typing import Dict, Any, Optional, Tuple, List
 
+
+class EpochBasedWandbLogger(WandbLogger):
+    """WandB logger that uses 'epoch' as the step for x-axis instead of trainer/global_step."""
+
+    def log_metrics(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
+        if metrics and 'epoch' in metrics:
+            step = metrics['epoch']
+        super().log_metrics(metrics, step=step)
+
 from src.utils import (
     cleanup_wandb, 
     ModelFactory, 
@@ -124,7 +133,7 @@ def configure_training(config: DictConfig) -> Tuple[Dict[str, Any], Optional[Wan
     try:
         # Initialize Wandb logger with error handling
         # Removed anonymous parameter to avoid deprecation warning
-        wandb_logger = WandbLogger(
+        wandb_logger = EpochBasedWandbLogger(
             project="handwriting_analysis",
             name=f"{config.model.type}_ws{config.data.window_sizes}_str{config.data.strides}",
             log_model=False # Avoid uploading models to wandb by default
